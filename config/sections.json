@@ -1,0 +1,77 @@
+[
+  {
+    "id": "01-overview",
+    "title": "Overview",
+    "description": "Week overview and introduction to the topic",
+    "constraints": {
+      "structure": ["Introduction paragraph (1-2 paragraphs)", "Guiding questions (2-3 questions)"],
+      "estimated_time": "10 minutes",
+      "format": "narrative"
+    }
+  },
+  {
+    "id": "02-weekly-learning-outcomes",
+    "title": "Weekly Level Learning Outcomes (WLOs)",
+    "description": "Specific weekly learning objectives aligned with course objectives",
+    "constraints": {
+      "structure": ["Introduction text", "3 WLOs maximum", "CLO mapping for each WLO"],
+      "format": "WLO1: [objective] (CLO1, CLO2)",
+      "alignment_required": true
+    }
+  },
+  {
+    "id": "03-key-words",
+    "title": "Key Words",
+    "description": "Main terminology and definitions with proper citations",
+    "constraints": {
+      "structure": ["Keyword", "Definition", "Citation"],
+      "citation_required": true,
+      "format": "academic"
+    }
+  },
+  {
+    "id": "04-readings-list",
+    "title": "Readings List",
+    "description": "Required and supplemental reading materials with focus areas and rationale",
+    "constraints": {
+      "structure": ["Source citation", "Focus Area (🔍)", "Rationale (💡)", "Estimated Time (⏳)"],
+      "citation_style": "academic_reference",
+      "include_time_estimates": true
+    }
+  },
+  {
+    "id": "05-discovery-phase",
+    "title": "DISCOVERY (85 minutes)",
+    "description": "Main content topics with narrative explanations and activities",
+    "constraints": {
+      "duration": "85 minutes",
+      "structure": ["Topic titles", "Narrative content", "Reading references", "Embedded activities"],
+      "topics": "multiple topics possible",
+      "include_assessment_hints": true
+    }
+  },
+  {
+    "id": "06-engagement-phase",
+    "title": "ENGAGEMENT (85 minutes)",
+    "description": "Interactive learning activities aligned with WLOs",
+    "constraints": {
+      "duration": "85 minutes",
+      "structure": ["Activity Title", "Activity Type", "Aligned WLO", "Instructions", "Grading Rubric"],
+      "activity_types": ["Discussion", "Simulation", "Case Study", "Project"],
+      "wlo_alignment_required": true,
+      "rubric_required": true
+    }
+  },
+  {
+    "id": "07-consolidation-phase",
+    "title": "CONSOLIDATION (42 minutes)",
+    "description": "Knowledge check, reflection, and summary activities",
+    "constraints": {
+      "duration": "42 minutes",
+      "structure": ["Knowledge Check (quiz)", "Reflection Poll", "Summary and Looking Ahead"],
+      "quiz_questions": "maximum 10 questions",
+      "quiz_time_limit": "20 minutes",
+      "reflection_questions": "standardized format"
+    }
+  }
+]

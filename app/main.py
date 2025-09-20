@@ -1,0 +1,320 @@
+import os
+import sys
+import argparse
+from typing import Dict, Any
+from pathlib import Path
+from dotenv import load_dotenv
+
+from langgraph.graph import StateGraph, END
+
+from app.models.schemas import RunState
+from app.utils.file_io import file_io
+from app.utils.input_validator import validate_inputs
+from app.utils.error_handler import create_error_summary
+from app.workflow.nodes import WorkflowNodes
+
+
+class CourseContentGenerator:
+    """Main orchestrator for the course content generation workflow"""
+
+    def __init__(self, base_path: str = "."):
+        self.base_path = Path(base_path)
+        self.workflow_nodes = WorkflowNodes()
+        self.graph = self._build_workflow_graph()
+
+    def _build_workflow_graph(self) -> StateGraph:
+        """Build the LangGraph state machine"""
+        workflow = StateGraph(RunState)
+
+        # Add nodes
+        workflow.add_node("program_director_plan", self.workflow_nodes.program_director_plan)
+        workflow.add_node("program_director_request_section", self.workflow_nodes.program_director_request_section)
+        workflow.add_node("content_expert_write", self.workflow_nodes.content_expert_write)
+        workflow.add_node("education_expert_review", self.workflow_nodes.education_expert_review)
+        workflow.add_node("alpha_student_review", self.workflow_nodes.alpha_student_review)
+        workflow.add_node("program_director_merge_or_revise", self.workflow_nodes.program_director_merge_or_revise)
+        workflow.add_node("program_director_finalize_week", self.workflow_nodes.program_director_finalize_week)
+
+        # Set entry point
+        workflow.set_entry_point("program_director_plan")
+
+        # Define edges
+        workflow.add_edge("program_director_plan", "program_director_request_section")
+
+        # Conditional logic for section processing
+        def should_continue_sections(state: RunState) -> str:
+            """Determine whether to continue with sections or finalize"""
+            if state.current_index >= len(state.sections):
+                return "finalize"
+            return "write_section"
+
+        def should_revise_or_approve(state: RunState) -> str:
+            """Determine whether section needs revision or can be approved"""
+            if not state.education_review or not state.alpha_review:
+                return "write_section"  # Something went wrong, restart section
+
+            both_approved = state.education_review.approved and state.alpha_review.approved
+            max_revisions_reached = state.revision_count >= state.max_revisions
+
+            if both_approved or max_revisions_reached:
+                return "next_section"
+            else:
+                return "revise_section"
+
+        workflow.add_conditional_edges(
+            "program_director_request_section",
+            should_continue_sections,
+            {
+                "write_section": "content_expert_write",
+                "finalize": "program_director_finalize_week"
+            }
+        )
+
+        workflow.add_edge("content_expert_write", "education_expert_review")
+        workflow.add_edge("education_expert_review", "alpha_student_review")
+
+        workflow.add_conditional_edges(
+            "alpha_student_review",
+            lambda state: "merge_or_revise",  # Always go to merge/revise decision
+            {"merge_or_revise": "program_director_merge_or_revise"}
+        )
+
+        workflow.add_conditional_edges(
+            "program_director_merge_or_revise",
+            should_revise_or_approve,
+            {
+                "next_section": "program_director_request_section",
+                "revise_section": "content_expert_write"
+            }
+        )
+
+        workflow.add_edge("program_director_finalize_week", END)
+
+        return workflow.compile()
+
+    def generate_week(self, week_number: int, sections_config: str = None,
+                     course_config: str = None, dry_run: bool = False) -> Dict[str, Any]:
+        """Generate content for a specific week"""
+
+        print(f"🎓 Starting course content generation for Week {week_number}")
+
+        # Run comprehensive input validation
+        if not validate_inputs(str(self.base_path)):
+            print("💥 Input validation failed. Please fix the issues above before continuing.")
+            return {
+                "week_number": week_number,
+                "success": False,
+                "error": "Input validation failed"
+            }
+
+        # Load configuration
+        sections = file_io.load_sections_config(sections_config)
+        course_config_data = file_io.load_course_config(course_config)
+
+        print(f"📋 Loaded {len(sections)} sections to generate")
+
+        # Initialize state
+        initial_state = RunState(
+            week_number=week_number,
+            sections=sections,
+            current_index=0,
+            max_revisions=3
+        )
+
+        if dry_run:
+            print("🔍 DRY RUN MODE - No actual content will be generated")
+            return {
+                "week_number": week_number,
+                "sections_count": len(sections),
+                "dry_run": True
+            }
+
+        try:
+            print("🚀 Starting workflow execution...")
+
+            # Execute workflow
+            final_state = self.graph.invoke(initial_state)
+
+            # Generate summary
+            result = {
+                "week_number": week_number,
+                "sections_generated": len(final_state.approved_sections),
+                "total_sections": len(final_state.sections),
+                "total_word_count": sum(s.word_count for s in final_state.approved_sections),
+                "final_file": f"./weekly_content/Week{week_number}.md",
+                "success": len(final_state.approved_sections) == len(final_state.sections)
+            }
+
+            # Add error summary to results
+            error_summary = create_error_summary()
+            result["error_summary"] = error_summary
+
+            if result["success"]:
+                print(f"✅ SUCCESS! Generated Week {week_number} content")
+                print(f"   📄 {result['sections_generated']} sections")
+                print(f"   📝 ~{result['total_word_count']} words total")
+                print(f"   💾 Saved to: {result['final_file']}")
+
+                # Show error summary if any errors occurred
+                if error_summary["total_errors"] > 0:
+                    print(f"   ⚠️  Note: {error_summary['total_errors']} errors handled during generation")
+                    print("   📋 Check logs for details on fallbacks used")
+            else:
+                print(f"⚠️  PARTIAL SUCCESS - {result['sections_generated']}/{result['total_sections']} sections completed")
+                print(f"   💥 {error_summary['total_errors']} errors encountered")
+
+            return result
+
+        except Exception as e:
+            error_msg = f"❌ ERROR during generation: {str(e)}"
+            print(error_msg)
+            file_io.log_run_state(week_number, {
+                "node": "main",
+                "action": "error",
+                "error": str(e)
+            })
+            return {
+                "week_number": week_number,
+                "success": False,
+                "error": str(e)
+            }
+
+
+
+def load_secrets():
+    """Load secrets from .secrets file"""
+    secrets_file = Path(".secrets")
+    if secrets_file.exists():
+        load_dotenv(secrets_file)
+        print("🔑 Loaded secrets from .secrets file")
+    else:
+        print("⚠️  No .secrets file found - using environment variables only")
+        print("   Copy .secrets.example to .secrets and configure your API keys")
+
+    # Verify at least one search provider is configured
+    search_providers = [
+        "TAVILY_API_KEY",
+        "BING_SEARCH_API_KEY",
+        "SERPAPI_API_KEY"
+    ]
+
+    has_search_provider = any(os.getenv(key) for key in search_providers)
+    google_cse_configured = os.getenv("GOOGLE_CSE_KEY") and os.getenv("GOOGLE_CSE_ID")
+
+    if not (has_search_provider or google_cse_configured):
+        print("⚠️  WARNING: No web search provider configured")
+        print("   Content generation will work but won't have fresh web sources")
+        print("   Configure one of: TAVILY_API_KEY, BING_SEARCH_API_KEY, SERPAPI_API_KEY, or Google CSE")
+
+
+def main():
+    """Main CLI entry point"""
+    parser = argparse.ArgumentParser(
+        description="Generate weekly course content for Data Science Master's program",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python -m app.main 7                    # Generate Week 7 content
+  python -m app.main 3 --dry-run         # Preview Week 3 generation
+  python -m app.main 5 --sections ./my_sections.json
+
+Environment Variables:
+  WEEK_NUMBER                Set week number if not provided as argument
+  OPENAI_API_KEY            Required for LLM access
+  TAVILY_API_KEY            Recommended web search provider
+
+Configuration Files:
+  .secrets                  API keys and model settings
+  config/sections.json      Section definitions
+  config/course_config.yaml Course settings
+        """
+    )
+
+    parser.add_argument(
+        "week_number",
+        type=int,
+        nargs="?",
+        help="Week number to generate (1-16)"
+    )
+
+    parser.add_argument(
+        "--sections",
+        help="Path to sections configuration JSON file"
+    )
+
+    parser.add_argument(
+        "--course-config",
+        help="Path to course configuration YAML file"
+    )
+
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview what would be generated without actually creating content"
+    )
+
+    args = parser.parse_args()
+
+    # Load environment and secrets
+    load_secrets()
+
+    # Determine week number
+    week_number = args.week_number or os.getenv("WEEK_NUMBER")
+    if not week_number:
+        print("❌ ERROR: Week number must be provided")
+        print("   Use: python -m app.main <week_number>")
+        print("   Or set: export WEEK_NUMBER=<week_number>")
+        sys.exit(1)
+
+    week_number = int(week_number)
+    if not (1 <= week_number <= 16):
+        print(f"❌ ERROR: Week number must be between 1 and 16, got {week_number}")
+        sys.exit(1)
+
+    # Check required API keys (either Azure OpenAI or regular OpenAI)
+    azure_configured = all(os.getenv(var) for var in ["AZURE_ENDPOINT", "AZURE_SUBSCRIPTION_KEY", "AZURE_API_VERSION"])
+    openai_configured = os.getenv("OPENAI_API_KEY") is not None
+
+    if not (azure_configured or openai_configured):
+        print("❌ ERROR: LLM configuration is required")
+        print("   Either configure Azure OpenAI:")
+        print("     AZURE_ENDPOINT, AZURE_SUBSCRIPTION_KEY, AZURE_API_VERSION")
+        print("   Or configure regular OpenAI:")
+        print("     OPENAI_API_KEY")
+        print("   Set these in .secrets file or environment")
+        sys.exit(1)
+
+    if azure_configured:
+        print("🔑 Using Azure OpenAI configuration")
+        print(f"   Endpoint: {os.getenv('AZURE_ENDPOINT')}")
+        print(f"   Deployment: {os.getenv('AZURE_DEPLOYMENT', 'gpt-5-mini')}")
+    elif openai_configured:
+        print("🔑 Using OpenAI configuration")
+    else:
+        print("⚠️  Warning: Unexpected configuration state")
+
+    # Initialize generator and run
+    try:
+        generator = CourseContentGenerator()
+        result = generator.generate_week(
+            week_number=week_number,
+            sections_config=args.sections,
+            course_config=args.course_config,
+            dry_run=args.dry_run
+        )
+
+        if result.get("success"):
+            sys.exit(0)
+        else:
+            sys.exit(1)
+
+    except KeyboardInterrupt:
+        print("\n🛑 Generation interrupted by user")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ FATAL ERROR: {str(e)}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

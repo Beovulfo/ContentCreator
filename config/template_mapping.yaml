@@ -1,0 +1,171 @@
+# Template Mapping for Weekly Content Template AUG_GC_V.2
+# This file maps template requirements to implementation details
+
+template_info:
+  name: "Weekly_Content_Template_AUG_GC_V.2"
+  version: "2.0"
+  source: "Academic Course Design Template"
+
+# Section-specific implementation guidelines
+sections:
+  overview:
+    template_requirements:
+      - "1-2 paragraphs overview of week's topic"
+      - "Highlight significance, avoid too much detail"
+      - "2-3 intriguing/challenging questions or tips"
+    implementation:
+      heading_level: "H1"
+      subsections:
+        - "Introduction"
+      content_guidelines:
+        - "Keep overview concise and compelling"
+        - "Include guiding questions as bullet points"
+        - "Focus on significance and relevance"
+
+  weekly_learning_outcomes:
+    template_requirements:
+      - "State Weekly-Level Learning Outcomes"
+      - "~3 WLOs tend to be sufficient"
+      - "Map each WLO to CLOs"
+      - "Format: WLO1: <objective> (CLO1, CLO2)"
+    implementation:
+      heading_level: "H2"
+      intro_text: "At the end of this week, you will be able to:"
+      format_pattern: "WLO{number}: {objective} (CLO{numbers})"
+      max_count: 3
+      clo_mapping_required: true
+
+  key_words:
+    template_requirements:
+      - "State main keywords for the week"
+      - "Include short definition for each keyword"
+      - "Provide source citation for each definition"
+    implementation:
+      heading_level: "H2"
+      structure:
+        - "Keyword name"
+        - "Definition with source"
+        - "Citation in proper academic format"
+      example_format: |
+        1. Business Environment
+        Definition: The combination of external and internal factors that influence a company's operations, including economic, legal, political, social, and technological conditions (Worthington & Britton, 2018).
+        Citation: Worthington, I., & Britton, C. (2018). The Business Environment. Pearson.
+
+  readings_list:
+    template_requirements:
+      - "Include both required and supplemental material"
+      - "Source in proper reference style"
+      - "Include Focus Area with 1-3 keywords"
+      - "Include Rationale (2-3 lines description)"
+      - "Include Estimated Time"
+    implementation:
+      heading_level: "H2"
+      format_structure:
+        - "🔍 Focus Area: {keywords}"
+        - "💡 Rationale: {description}"
+        - "⏳ Estimated Time: {minutes} minutes"
+      citation_style: "APA"
+
+  discovery_phase:
+    template_requirements:
+      - "85 minutes total active learning time"
+      - "Multiple topics possible"
+      - "Include narrative content"
+      - "Reference readings"
+      - "Include embedded activities"
+      - "Add Assessment Hints section"
+    implementation:
+      heading_level: "H1"
+      duration: 85
+      structure:
+        - "Topic titles (H2)"
+        - "Narrative explanations"
+        - "Reading references"
+        - "Activities embedded in topics"
+        - "Assessment Hints section"
+      content_style: "Engaging narrative with examples"
+
+  engagement_phase:
+    template_requirements:
+      - "85 minutes total active learning time"
+      - "Activity Title"
+      - "Activity Type (Discussion/Simulation/Case Study)"
+      - "Aligned Weekly Level Learning Outcome"
+      - "Instructions for Students"
+      - "Grading Rubric"
+    implementation:
+      heading_level: "H1"
+      duration: 85
+      required_subsections:
+        - "Activity Title (H2)"
+        - "Activity Type"
+        - "Aligned Weekly Level Learning Outcome (WLO) (H4)"
+        - "Instructions for Students (H3)"
+        - "Grading Rubric (H2)"
+      activity_types: ["Discussion (Graded)", "Simulation", "Case Study", "Project"]
+
+  consolidation_phase:
+    template_requirements:
+      - "42 minutes total time"
+      - "Knowledge Check (quiz with max 10 questions)"
+      - "Quiz: 1 attempt, 20 minutes time limit"
+      - "Reflection Poll with standard questions"
+      - "Summary and Looking Ahead"
+    implementation:
+      heading_level: "H1"
+      duration: 42
+      subsections:
+        knowledge_check:
+          heading: "Knowledge Check (H3)"
+          questions_max: 10
+          attempts: 1
+          time_limit: "20 minutes"
+        reflection_poll:
+          heading: "Reflection poll (H3)"
+          standard_questions: true
+        summary:
+          heading: "Summary and Looking ahead (H3)"
+          content: "1 paragraph current week + 1 paragraph next week preparation"
+
+# Standard reflection poll questions from template
+standard_reflection_questions:
+  - question: "How much time did you spend engaging with the course materials this week?"
+    options:
+      - "Less than 1 hour"
+      - "1–3 hours"
+      - "3–5 hours"
+      - "More than 5 hours"
+
+  - question: "How well do you think you understand the key concepts from this week's material?"
+    options:
+      - "I feel lost and need significant help"
+      - "I understand parts of it but need more review"
+      - "I mostly understand but could use some clarification"
+      - "I fully understand and feel confident applying it"
+
+  - question: "What is one change you plan to make in your study habits next week to improve your learning?"
+    options:
+      - "Spend more time engaging with the content"
+      - "Engage more actively with activities"
+      - "Take better notes or review materials more often"
+      - "Seek clarification when needed"
+      - "Find a quieter place to study with fewer distractions"
+      - "No changes—I'm happy with my approach"
+
+# Time allocation guidelines
+time_allocations:
+  discovery_phase: 85  # minutes
+  engagement_phase: 85  # minutes
+  consolidation_phase: 42  # minutes
+  total_learning_time: 212  # minutes (~3.5 hours)
+
+# Quality checks specific to template
+template_compliance_checks:
+  - "All three phases (Discovery, Engagement, Consolidation) present"
+  - "Time allocations match template requirements"
+  - "WLO alignment explicitly stated in Engagement phase"
+  - "Grading rubric present for graded activities"
+  - "Reflection poll uses standard questions"
+  - "Knowledge check has ≤10 questions, 20-minute limit, 1 attempt"
+  - "Citations follow academic format"
+  - "Emoji format used in readings list"

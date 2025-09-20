@@ -1,0 +1,208 @@
+# Building Blocks and Tools V2 Compliance Requirements
+# This file ensures all multimedia and assessment elements follow institutional guidelines
+
+multimedia_guidelines:
+
+  reading_annotations:
+    description: "Guidelines for referencing readings within content"
+    requirements:
+      - "Incorporate reading ideas within narratives with proper citations"
+      - "Clearly signpost specific readings at relevant points"
+      - "Use APA citation format consistently"
+    implementation:
+      narrative_integration: "Cite within text flow: '(Author, Year)'"
+      signposting: "Use clear indicators: '📖 **Reading Reference**: [Title and citation]'"
+      citation_style: "APA format required for all sources"
+
+  figure_requirements:
+    description: "Standards for including figures and images"
+    mandatory_elements:
+      - "Figure caption: 'Figure [#]: [Title]'"
+      - "Source citation (if applicable): 'Source: Author, Year'"
+      - "Alt text for accessibility"
+      - "In-text citation: 'As we see in Figure 1...'"
+    format:
+      caption_template: "Figure {number}: {title}"
+      source_template: "(Source: {author}, {year})"
+      alt_text_purpose: "Describe content and purpose for screen readers"
+    example:
+      caption: "Figure 1: Types of marketing research (Designs)"
+      source: "(Source: Malhotra, 2010 - adapted by the course instructor)"
+      alt_text: "A flowchart of research design, divided into two main types: Exploratory/Qualitative and Conclusive/Quantitative..."
+      in_text_reference: "As demonstrated in Figure 1, research design follows two primary approaches..."
+
+  table_requirements:
+    description: "Standards for including tables and data displays"
+    mandatory_elements:
+      - "Table caption: 'Table [#]: [Title]'"
+      - "Source citation (if applicable): 'Source: Author, Year'"
+      - "Alt text for accessibility"
+      - "In-text citation: 'As shown in Table 1...'"
+    format:
+      caption_template: "Table {number}: {title}"
+      source_template: "(Source: {author}, {year})"
+      alt_text_purpose: "Describe table structure and key data for screen readers"
+    example:
+      caption: "Table 1: Business Research Design Comparison"
+      source: "(Source: Hypothetical Data)"
+      alt_text: "A table comparing three types of business research designs: Exploratory (Qualitative), Descriptive (Quantitative), and Causal (Quantitative)..."
+      in_text_reference: "The comparison shown in Table 1 illustrates the key differences..."
+
+  video_requirements:
+    description: "Standards for embedding and referencing videos"
+    mandatory_elements:
+      - "Video title"
+      - "Complete URL"
+      - "Duration (preferably 3-5 minutes)"
+      - "Rationale explaining importance"
+      - "Note about subtitles/captions availability"
+    format:
+      title_template: "Video: {title}"
+      url_template: "URL: {full_url}"
+      duration_template: "Duration: {minutes} minutes"
+      rationale_template: "Rationale: {explanation_of_relevance}"
+      accessibility_note: "Subtitles/captions available"
+    duration_preferences:
+      optimal: "3-5 minutes"
+      acceptable: "Less than 5 minutes"
+      rationale: "Short videos maintain student engagement"
+    sources:
+      preferred: ["YouTube", "TEDx", "Khan Academy", "Coursera"]
+      custom_tools: ["Synthesia.io", "Instructor-created content"]
+    example:
+      title: "Video: Introduction to Experimental Design"
+      url: "URL: https://youtu.be/DaBq0naj0YY"
+      duration: "Duration: 5 minutes"
+      rationale: "Rationale: Watch this informative video by Khan Academy to get a good idea of what an experimental design is about."
+      accessibility: "Subtitles/captions available"
+
+assessment_guidelines:
+
+  quiz_question_types:
+    description: "Blackboard Ultra quiz question formats and requirements"
+
+    calculated_formula:
+      required_fields:
+        - "Question Text"
+        - "Formula Used"
+        - "Variables and Value Ranges"
+        - "Correct Answer Formula"
+        - "Unit (if applicable)"
+        - "Tolerance (Accepted Range of Error)"
+        - "Difficulty Level (Easy, Medium, Hard)"
+
+    calculated_numeric:
+      required_fields:
+        - "Question Text"
+        - "Expected Numeric Answer"
+        - "Tolerance (Accepted Range of Error)"
+        - "Unit (if applicable)"
+        - "Difficulty Level (Easy, Medium, Hard)"
+
+    essay:
+      required_fields:
+        - "Question Text"
+        - "Key Points to be Covered in Answer"
+        - "Word Limit (if applicable)"
+        - "Rubric for Grading (if any)"
+        - "Difficulty Level (Easy, Medium, Hard)"
+
+    fill_in_blank:
+      required_fields:
+        - "Question Text (Include blank spaces)"
+        - "Correct Answer(s)"
+        - "Case Sensitivity (Yes/No)"
+        - "Alternate Correct Responses (if any)"
+        - "Difficulty Level (Easy, Medium, Hard)"
+
+    hotspot:
+      required_fields:
+        - "Question Text (Describe what student must identify)"
+        - "Image Used (Attach or Link)"
+        - "Correct Hotspot Location(s)"
+        - "Tolerance (Accepted Range of Error)"
+        - "Difficulty Level (Easy, Medium, Hard)"
+
+    matching:
+      required_fields:
+        - "Instructions for Students"
+        - "List of Items to Match (Column A & Column B)"
+        - "Correct Answer Pairings"
+        - "Difficulty Level (Easy, Medium, Hard)"
+
+    multiple_choice:
+      required_fields:
+        - "Question Text"
+        - "Answer Choices (A, B, C, D)"
+        - "Correct Answer(s)"
+        - "Randomize Answer Order (Yes/No)"
+        - "Feedback/Explanation (if applicable)"
+        - "Difficulty Level (Easy, Medium, Hard)"
+      format:
+        options: 4  # Always include 4 options (A, B, C, D)
+        feedback_limitation: "Blackboard Ultra allows one explanation for correct answer and one general for all wrong answers"
+
+    true_false:
+      required_fields:
+        - "Question Text"
+        - "Correct Answer (True/False)"
+        - "Feedback/Explanation (if applicable)"
+        - "Difficulty Level (Easy, Medium, Hard)"
+
+accessibility_standards:
+  description: "Universal design and accessibility requirements"
+
+  alt_text_requirements:
+    purpose: "Provide descriptions for screen readers and visually impaired users"
+    for_figures: "Describe content, purpose, and key visual elements"
+    for_tables: "Describe structure, key data points, and relationships"
+    for_videos: "Mention if subtitles/captions are available"
+    best_practices:
+      - "Be descriptive but concise"
+      - "Focus on educational content, not decorative elements"
+      - "Include key data points and relationships"
+      - "Describe visual elements that support learning objectives"
+
+  inclusive_design:
+    multimedia_access: "All videos must have subtitles/captions available"
+    reading_level: "Use clear, accessible language appropriate for Master's level"
+    navigation: "Provide clear signposting and structure"
+    diversity: "Use inclusive examples and diverse perspectives"
+
+validation_checklist:
+  multimedia_compliance:
+    - "All figures have proper captions, sources, and alt text"
+    - "All tables have proper captions, sources, and alt text"
+    - "All videos include title, URL, duration, rationale, and accessibility note"
+    - "All readings are properly cited or clearly signposted"
+    - "In-text references match multimedia elements"
+
+  assessment_compliance:
+    - "Quiz questions specify question type"
+    - "All questions include difficulty level (Easy/Medium/Hard)"
+    - "Multiple choice questions have 4 options (A, B, C, D)"
+    - "Feedback provided where appropriate"
+    - "Question formats follow Blackboard Ultra requirements"
+
+  accessibility_compliance:
+    - "Alt text provided for all visual elements"
+    - "Video accessibility noted (subtitles/captions)"
+    - "Clear signposting for reading references"
+    - "Inclusive language and examples used"
+    - "Content navigable and well-structured"
+
+enforcement_priorities:
+  critical:
+    - "Alt text for all figures and tables (accessibility compliance)"
+    - "Proper citation format for all multimedia elements"
+    - "Quiz questions include question type and difficulty level"
+
+  important:
+    - "Video duration preferences (3-5 minutes)"
+    - "In-text citations for figures and tables"
+    - "Reading signposting clarity"
+
+  recommended:
+    - "Video source diversity (academic vs. popular sources)"
+    - "Multimedia element distribution throughout content"
+    - "Inclusive example selection"
