@@ -29,95 +29,76 @@ class CourseContentGenerator:
         self.graph = self._build_workflow_graph()
 
     def _build_workflow_graph(self) -> StateGraph:
-        """Build the LangGraph state machine"""
+        """Build the autonomous W/E/R workflow state machine"""
         workflow = StateGraph(RunState)
 
-        # Add nodes
-        workflow.add_node("program_director_validate_inputs", self.workflow_nodes.program_director_validate_inputs)
-        workflow.add_node("program_director_plan", self.workflow_nodes.program_director_plan)
-        workflow.add_node("program_director_request_section", self.workflow_nodes.program_director_request_section)
+        # Add nodes - simplified autonomous workflow
+        workflow.add_node("initialize_workflow", self.workflow_nodes.initialize_workflow)
+        workflow.add_node("request_next_section", self.workflow_nodes.request_next_section)
         workflow.add_node("content_expert_write", self.workflow_nodes.content_expert_write)
         workflow.add_node("education_expert_review", self.workflow_nodes.education_expert_review)
         workflow.add_node("alpha_student_review", self.workflow_nodes.alpha_student_review)
-        workflow.add_node("program_director_merge_or_revise", self.workflow_nodes.program_director_merge_or_revise)
-        workflow.add_node("program_director_final_review", self.workflow_nodes.program_director_final_review)
-        workflow.add_node("program_director_finalize_week", self.workflow_nodes.program_director_finalize_week)
+        workflow.add_node("merge_section_or_revise", self.workflow_nodes.merge_section_or_revise)
+        workflow.add_node("finalize_complete_week", self.workflow_nodes.finalize_complete_week)
 
         # Set entry point
-        workflow.set_entry_point("program_director_validate_inputs")
+        workflow.set_entry_point("initialize_workflow")
 
-        # Define edges
-        workflow.add_edge("program_director_validate_inputs", "program_director_plan")
-        workflow.add_edge("program_director_plan", "program_director_request_section")
+        # Define edges - simplified autonomous flow
+        workflow.add_edge("initialize_workflow", "request_next_section")
 
-        # Conditional logic for section processing
-        def should_continue_sections(state: RunState) -> str:
-            """Determine whether to continue with sections or go to final review"""
+        # Conditional logic for autonomous section processing
+        def should_continue_or_finalize(state: RunState) -> str:
+            """Determine whether to continue with next section or finalize week"""
             if state.current_index >= len(state.sections):
-                return "final_review"
+                return "finalize_week"
             return "content_expert_write"
 
-        def should_revise_or_approve(state: RunState) -> str:
-            """Determine whether section needs revision or can be approved"""
+        def should_revise_or_continue(state: RunState) -> str:
+            """Autonomous decision: revise if both reviewers reject, otherwise continue"""
             if not state.education_review or not state.alpha_review:
-                return "revise_section"  # Something went wrong, restart section
+                return "revise"  # Something went wrong, retry section
 
             both_approved = state.education_review.approved and state.alpha_review.approved
             max_revisions_reached = state.revision_count >= state.max_revisions
 
             if both_approved or max_revisions_reached:
-                return "next_section"
+                return "continue"  # Accept section and move to next
             else:
-                return "revise_section"
+                return "revise"  # Revise current section
 
-        def should_finalize_or_revise_week(state: RunState) -> str:
-            """Determine whether to finalize week or revise based on ProgramDirector final review"""
-            if not state.final_coherence_review:
-                return "finalize"  # Skip review if not available
-
-            if state.final_coherence_review.get("approved", False):
-                return "finalize"
-            else:
-                # If ProgramDirector rejects, we could implement week-level revision
-                # For now, we'll finalize anyway but with warning logs
-                return "finalize"
-
+        # Flow: Initialize → Request Section → Writer → Editor → Reviewer → Decision
         workflow.add_conditional_edges(
-            "program_director_request_section",
-            should_continue_sections,
+            "request_next_section",
+            should_continue_or_finalize,
             {
                 "content_expert_write": "content_expert_write",
-                "final_review": "program_director_final_review"
+                "finalize_week": "finalize_complete_week"
             }
         )
 
+        # Writer/Editor/Reviewer chain
         workflow.add_edge("content_expert_write", "education_expert_review")
         workflow.add_edge("education_expert_review", "alpha_student_review")
 
+        # Decision point after reviews
         workflow.add_conditional_edges(
             "alpha_student_review",
-            lambda state: "merge_or_revise",  # Always go to merge/revise decision
-            {"merge_or_revise": "program_director_merge_or_revise"}
+            lambda state: "merge_or_revise",
+            {"merge_or_revise": "merge_section_or_revise"}
         )
 
+        # Continue to next section or revise current section
         workflow.add_conditional_edges(
-            "program_director_merge_or_revise",
-            should_revise_or_approve,
+            "merge_section_or_revise",
+            should_revise_or_continue,
             {
-                "next_section": "program_director_request_section",
-                "revise_section": "content_expert_write"
+                "continue": "request_next_section",  # Move to next section
+                "revise": "content_expert_write"     # Revise current section
             }
         )
 
-        workflow.add_conditional_edges(
-            "program_director_final_review",
-            should_finalize_or_revise_week,
-            {
-                "finalize": "program_director_finalize_week"
-            }
-        )
-
-        workflow.add_edge("program_director_finalize_week", END)
+        workflow.add_edge("finalize_complete_week", END)
 
         return workflow.compile()
 
@@ -128,21 +109,10 @@ class CourseContentGenerator:
         # Initialize tracer for continuous progress tracking
         tracer = initialize_tracer(week_number, verbose)
 
-        print(f"🎓 Starting course content generation for Week {week_number}")
+        print(f"🎓 Starting autonomous course content generation for Week {week_number}")
 
-        # Run basic file system input validation
-        if not validate_inputs(str(self.base_path)):
-            print("💥 Basic input validation failed. Please fix the file issues above before continuing.")
-            tracer.workflow_error("Basic input validation failed", "file_system_check")
-            return {
-                "week_number": week_number,
-                "success": False,
-                "error": "Input validation failed"
-            }
-
-        # Load configuration
+        # Load configuration directly - no interactive validation
         sections = file_io.load_sections_config(sections_config)
-        course_config_data = file_io.load_course_config(course_config)
 
         print(f"📋 Loaded {len(sections)} sections to generate")
 
@@ -168,14 +138,17 @@ class CourseContentGenerator:
             # Execute workflow
             final_state = self.graph.invoke(initial_state)
 
-            # Generate summary
+            # Generate summary (final_state is a dict from LangGraph)
+            approved_sections = final_state.get("approved_sections", [])
+            sections = final_state.get("sections", [])
+
             result = {
                 "week_number": week_number,
-                "sections_generated": len(final_state.approved_sections),
-                "total_sections": len(final_state.sections),
-                "total_word_count": sum(s.word_count for s in final_state.approved_sections),
+                "sections_generated": len(approved_sections),
+                "total_sections": len(sections),
+                "total_word_count": sum(s.word_count for s in approved_sections),
                 "final_file": f"./weekly_content/Week{week_number}.md",
-                "success": len(final_state.approved_sections) == len(final_state.sections)
+                "success": len(approved_sections) == len(sections)
             }
 
             # Add error summary to results

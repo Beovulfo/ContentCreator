@@ -8,21 +8,40 @@ from app.models.schemas import WebSearchResult
 
 class WebSearchTool:
     def __init__(self):
-        self.tavily_key = os.getenv("TAVILY_API_KEY")
-        self.bing_key = os.getenv("BING_SEARCH_API_KEY")
-        self.serp_key = os.getenv("SERPAPI_API_KEY")
-        self.google_cse_key = os.getenv("GOOGLE_CSE_KEY")
-        self.google_cse_id = os.getenv("GOOGLE_CSE_ID")
-        self.timeout = int(os.getenv("HTTP_TIMEOUT_SECONDS", "15"))
-
         # Rate limiting and cache
         self.last_request_time = {}
         self.min_request_interval = 1.0  # seconds between requests
         self.request_cache = {}
         self.cache_ttl = 300  # 5 minutes cache TTL
 
-        # Provider priorities (highest to lowest)
-        self.provider_priority = self._determine_provider_priority()
+    @property
+    def tavily_key(self):
+        return os.getenv("TAVILY_API_KEY")
+
+    @property
+    def bing_key(self):
+        return os.getenv("BING_SEARCH_API_KEY")
+
+    @property
+    def serp_key(self):
+        return os.getenv("SERPAPI_API_KEY")
+
+    @property
+    def google_cse_key(self):
+        return os.getenv("GOOGLE_CSE_KEY")
+
+    @property
+    def google_cse_id(self):
+        return os.getenv("GOOGLE_CSE_ID")
+
+    @property
+    def timeout(self):
+        return int(os.getenv("HTTP_TIMEOUT_SECONDS", "15"))
+
+    @property
+    def provider_priority(self):
+        """Lazy evaluation of provider priority"""
+        return self._determine_provider_priority()
 
     def search(self, query: str, top_k: int = 5, recency_days: Optional[int] = 730) -> List[WebSearchResult]:
         """
@@ -363,8 +382,25 @@ class WebSearchTool:
         }
 
 
-# Singleton instance
-web_tool = WebSearchTool()
+# Singleton instance - lazy initialization
+_web_tool_instance = None
+
+def get_web_tool() -> WebSearchTool:
+    """Get the singleton WebSearchTool instance with lazy initialization"""
+    global _web_tool_instance
+    if _web_tool_instance is None:
+        _web_tool_instance = WebSearchTool()
+    return _web_tool_instance
+
+# Create a lazy property-like object for backward compatibility
+class _WebToolProxy:
+    def __getattr__(self, name):
+        return getattr(get_web_tool(), name)
+
+    def __call__(self, *args, **kwargs):
+        return get_web_tool()(*args, **kwargs)
+
+web_tool = _WebToolProxy()
 
 
 def search(query: str, top_k: int = 5, recency_days: Optional[int] = 730) -> List[WebSearchResult]:

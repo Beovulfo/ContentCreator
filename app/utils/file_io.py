@@ -26,7 +26,7 @@ class FileIO:
         return CourseInputs(
             week_number=week_number,
             syllabus_path=str(input_dir / "syllabus.md"),
-            template_path=str(input_dir / "Weekly_Content_Template_AUG_GC_V.2.docx"),
+            template_path=str(input_dir / "template.md"),
             guidelines_path=str(input_dir / "guidelines.md"),
             sections_config_path=str(self.base_path / "config" / "sections.json"),
             course_config_path=str(self.base_path / "config" / "course_config.yaml")
@@ -110,7 +110,6 @@ class FileIO:
                 ]
             },
             "agents": {
-                "program_director": {"temperature": 0.3, "max_tokens": 2000},
                 "content_expert": {"temperature": 0.7, "max_tokens": 4000},
                 "education_expert": {"temperature": 0.3, "max_tokens": 2000},
                 "alpha_student": {"temperature": 0.5, "max_tokens": 2000}
@@ -188,7 +187,7 @@ class FileIO:
         return sections
 
     def compile_weekly_content(self, week_number: int, sections: List[SectionDraft],
-                             week_title: str = "") -> str:
+                             week_title: str = "", section_specs: List[SectionSpec] = None) -> str:
         """Compile all approved sections into final weekly markdown file"""
         if not week_title:
             week_title = f"Data Science Week {week_number}"
@@ -201,17 +200,39 @@ class FileIO:
             ""
         ]
 
-        # Generate TOC
+        # Create a mapping of section IDs to titles
+        section_titles = {}
+        if section_specs:
+            for spec in section_specs:
+                section_titles[spec.id] = spec.title
+
+        # Generate TOC using section titles from specs
         for section in sections:
+            # Try to extract title from content first, otherwise use section title from spec
             section_title = self._extract_title_from_content(section.content_md)
+            if section_title == "Section Content":
+                # Use the title from the section spec (this should come from sections.json)
+                section_title = section_titles.get(section.section_id, f"Section {section.section_id}")
             anchor = self._create_anchor(section_title)
             content_parts.append(f"- [{section_title}](#{anchor})")
 
         content_parts.extend(["", "---", ""])
 
-        # Add all sections
+        # Add all sections with proper headers
         all_citations = []
         for section in sections:
+            # Ensure each section starts with proper H2 header
+            section_title = self._extract_title_from_content(section.content_md)
+            if section_title == "Section Content":
+                section_title = section_titles.get(section.section_id, f"Section {section.section_id}")
+
+            # Check if content already starts with proper header
+            content_lines = section.content_md.strip().split('\n')
+            if not (content_lines[0].startswith('# ') or content_lines[0].startswith('## ')):
+                # Add H2 header if missing
+                content_parts.append(f"## {section_title}")
+                content_parts.append("")
+
             content_parts.append(section.content_md)
             content_parts.append("")
             all_citations.extend(section.citations)
@@ -237,12 +258,13 @@ class FileIO:
         return str(file_path)
 
     def _extract_title_from_content(self, content: str) -> str:
-        """Extract the first heading from markdown content"""
+        """Extract the first heading from markdown content or use section title"""
         lines = content.strip().split('\n')
         for line in lines:
             if line.startswith('# ') or line.startswith('## '):
                 return line.lstrip('# ').strip()
-        return "Untitled Section"
+        # If no heading found, return a fallback based on content
+        return "Section Content"
 
     def _create_anchor(self, title: str) -> str:
         """Create a URL anchor from a title"""
