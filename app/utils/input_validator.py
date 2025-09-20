@@ -143,8 +143,8 @@ class InputValidator:
         input_dir = self.base_path / "input"
 
         required_files = {
-            "course_syllabus.docx": self._validate_docx_file,
-            "template.docx": self._validate_template_docx,
+            "syllabus.md": self._validate_markdown_file,
+            "Weekly_Content_Template_AUG_GC_V.2.docx": self._validate_template_docx,
             "guidelines.md": self._validate_markdown_file
         }
 

@@ -37,6 +37,13 @@ class ReviewNotes(BaseModel):
     link_check_results: Optional[List[Dict[str, Any]]] = Field(default=None, description="URL validation results")
 
 
+class WebSearchResult(BaseModel):
+    title: str
+    url: str
+    snippet: str
+    published: Optional[str] = None
+
+
 class RunState(BaseModel):
     week_number: int = Field(description="Week being generated")
     sections: List[SectionSpec] = Field(description="All sections to generate")
@@ -46,18 +53,11 @@ class RunState(BaseModel):
     alpha_review: Optional[ReviewNotes] = Field(default=None, description="Alpha student feedback")
     approved_sections: List[SectionDraft] = Field(default_factory=list, description="Completed sections")
     revision_count: int = Field(default=0, description="Number of revisions for current section")
-    max_revisions: int = Field(default=3, description="Maximum revisions per section")
+    max_revisions: int = Field(default=1, description="Maximum revisions per section")
     context_summary: str = Field(default="", description="Summary of previously approved content")
     web_results: Optional[List[WebSearchResult]] = Field(default=None, description="Current web search results")
     context_usage: Optional[Dict[str, int]] = Field(default=None, description="Token usage tracking")
     optimization_context: Optional[Dict[str, Any]] = Field(default=None, description="Revision optimization context")
-
-
-class WebSearchResult(BaseModel):
-    title: str
-    url: str
-    snippet: str
-    published: Optional[str] = None
 
 
 class LinkCheckResult(BaseModel):

@@ -319,14 +319,14 @@ class RevisionOptimizer:
 
         # Count issues by priority
         priority_counts = {
-            FeedbackPriority.CRITICAL: 0,
-            FeedbackPriority.HIGH: 0,
-            FeedbackPriority.MEDIUM: 0,
-            FeedbackPriority.LOW: 0
+            "CRITICAL": 0,
+            "HIGH": 0,
+            "MEDIUM": 0,
+            "LOW": 0
         }
 
         for feedback in feedback_list:
-            priority_counts[feedback.priority] += 1
+            priority_counts[feedback.priority.name] += 1
 
         # Determine strategy
         if revision_count >= max_revisions:
@@ -339,7 +339,7 @@ class RevisionOptimizer:
             }
 
         # If no critical or high priority issues, approve
-        if priority_counts[FeedbackPriority.CRITICAL] == 0 and priority_counts[FeedbackPriority.HIGH] == 0:
+        if priority_counts["CRITICAL"] == 0 and priority_counts["HIGH"] == 0:
             return {
                 "action": "approve",
                 "reason": "No critical or high priority issues",
@@ -352,7 +352,7 @@ class RevisionOptimizer:
 
         return {
             "action": "revise",
-            "reason": f"{priority_counts[FeedbackPriority.CRITICAL]} critical, {priority_counts[FeedbackPriority.HIGH]} high priority issues",
+            "reason": f"{priority_counts['CRITICAL']} critical, {priority_counts['HIGH']} high priority issues",
             "focus_areas": focus_areas,
             "priority_counts": priority_counts
         }

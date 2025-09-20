@@ -1,7 +1,7 @@
 import os
 import requests
 import json
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from tenacity import retry, stop_after_attempt, wait_exponential
 from app.models.schemas import WebSearchResult
 

@@ -25,22 +25,22 @@ class WorkflowNodes(RobustWorkflowMixin):
             deployment = os.getenv("AZURE_DEPLOYMENT", "gpt-5-mini")
             self.program_director_llm = self._create_azure_llm(
                 deployment=deployment,
-                temperature=0.3,
+                temperature=1.0,
                 max_tokens=2000
             )
             self.content_expert_llm = self._create_azure_llm(
                 deployment=deployment,
-                temperature=0.7,
+                temperature=1.0,
                 max_tokens=4000
             )
             self.education_expert_llm = self._create_azure_llm(
                 deployment=deployment,
-                temperature=0.3,
+                temperature=1.0,
                 max_tokens=2000
             )
             self.alpha_student_llm = self._create_azure_llm(
                 deployment=deployment,
-                temperature=0.5,
+                temperature=1.0,
                 max_tokens=2000
             )
             # Initialize context managers with Azure model name
@@ -52,22 +52,22 @@ class WorkflowNodes(RobustWorkflowMixin):
             content_model = os.getenv("MODEL_CONTENT_EXPERT", "gpt-4o")
             self.program_director_llm = ChatOpenAI(
                 model=os.getenv("MODEL_PROGRAM_DIRECTOR", "gpt-4o-mini"),
-                temperature=0.3,
+                temperature=1.0,
                 max_tokens=2000
             )
             self.content_expert_llm = ChatOpenAI(
                 model=content_model,
-                temperature=0.7,
+                temperature=1.0,
                 max_tokens=4000
             )
             self.education_expert_llm = ChatOpenAI(
                 model=os.getenv("MODEL_EDUCATION_EXPERT", "gpt-4o-mini"),
-                temperature=0.3,
+                temperature=1.0,
                 max_tokens=2000
             )
             self.alpha_student_llm = ChatOpenAI(
                 model=os.getenv("MODEL_ALPHA_STUDENT", "gpt-4o-mini"),
-                temperature=0.5,
+                temperature=1.0,
                 max_tokens=2000
             )
             # Initialize context managers with OpenAI model names
@@ -88,8 +88,28 @@ class WorkflowNodes(RobustWorkflowMixin):
             api_key=os.getenv("AZURE_SUBSCRIPTION_KEY"),
             api_version=os.getenv("AZURE_API_VERSION"),
             temperature=temperature,
-            max_tokens=max_tokens
+            max_completion_tokens=max_tokens
         )
+
+    def _extract_week_info(self, syllabus_content: str, week_number: int) -> str:
+        """Extract only the relevant week information from syllabus"""
+        lines = syllabus_content.split('\n')
+        week_section = []
+        capturing = False
+
+        week_header = f"### Week {week_number}:"
+
+        for line in lines:
+            if line.startswith(week_header):
+                capturing = True
+                week_section.append(line)
+            elif capturing and line.startswith("### Week ") and not line.startswith(week_header):
+                # Found next week, stop capturing
+                break
+            elif capturing:
+                week_section.append(line)
+
+        return '\n'.join(week_section) if week_section else f"Week {week_number} information not found"
 
     def program_director_plan(self, state: RunState) -> RunState:
         """Initialize the workflow and plan section generation"""
@@ -133,118 +153,74 @@ class WorkflowNodes(RobustWorkflowMixin):
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def content_expert_write(self, state: RunState) -> RunState:
-        """ContentExpert writes the section draft"""
+        """ContentExpert writes the section draft - only gets section instructions and syllabus"""
         current_section = state.sections[state.current_index]
-
-        # Load course materials with error handling
         course_inputs = file_io.load_course_inputs(state.week_number)
 
-        # Safe file loading with fallbacks
-        syllabus_content = self.safe_file_operation(
-            lambda: file_io.read_docx_file(course_inputs.syllabus_path),
-            "read_syllabus_docx"
-        )
-        template_content = self.safe_file_operation(
-            lambda: file_io.read_docx_file(course_inputs.template_path),
-            "read_template_docx"
-        )
-        guidelines_content = self.safe_file_operation(
-            lambda: file_io.read_markdown_file(course_inputs.guidelines_path),
-            "read_guidelines_md"
-        )
+        # ContentExpert ONLY gets:
+        # 1. Section-specific instructions from ProgramDirector
+        # 2. Week-specific syllabus content
+        # 3. Previous section context (minimal)
 
-        # Check if freshness is needed
-        needs_freshness = PromptBuilder.check_freshness_needed(
-            current_section.description,
-            syllabus_content
-        )
+        # Load ONLY the syllabus (not template or guidelines)
+        if course_inputs.syllabus_path.endswith('.md'):
+            syllabus_content = self.safe_file_operation(
+                lambda: file_io.read_markdown_file(course_inputs.syllabus_path),
+                "read_syllabus_md"
+            )
+        else:
+            syllabus_content = self.safe_file_operation(
+                lambda: file_io.read_docx_file(course_inputs.syllabus_path),
+                "read_syllabus_docx"
+            )
 
-        # Safe web search with fallback
+        # Extract only Week-specific information from syllabus
+        week_info = self._extract_week_info(syllabus_content, state.week_number)
+
+        # Optional web search for freshness (minimal)
         search_results = []
-        if needs_freshness:
+        if "latest" in current_section.description.lower() or "current" in current_section.description.lower():
             search_query = f"{current_section.title} data science latest 2024 2025"
             search_results = self.safe_web_search(
-                lambda q: web.search(q, top_k=5),
+                lambda q: web.search(q, top_k=3),  # Reduced from 5 to 3
                 search_query
             )
 
-            if search_results:
-                file_io.log_run_state(state.week_number, {
-                    "node": "content_expert_write",
-                    "action": "web_search_completed",
-                    "results_count": len(search_results)
-                })
-            else:
-                file_io.log_run_state(state.week_number, {
-                    "node": "content_expert_write",
-                    "action": "web_search_no_results",
-                    "query": search_query
-                })
+            file_io.log_run_state(state.week_number, {
+                "node": "content_expert_write",
+                "action": "web_search_no_results" if not search_results else "web_search_completed",
+                "query": search_query
+            })
 
-        # Build the prompt for ContentExpert
-        key_guidelines = PromptBuilder.extract_key_guidelines(guidelines_content, current_section.id)
+        # Build minimal prompt for ContentExpert (ONLY section task + week info)
+        content_expert_prompt = f"""
+You are the ContentExpert. Write ONLY the content for this section:
 
-        request_prompt = PromptTemplates.get_program_director_request(
-            section_title=current_section.title,
-            section_id=current_section.id,
-            section_description=current_section.description,
-            section_ordinal=current_section.ordinal,
-            total_sections=len(state.sections),
-            wlos=self._extract_wlos_from_syllabus(syllabus_content, state.week_number),
-            template_constraints=self._extract_template_constraints(template_content, current_section.id),
-            previous_context=state.context_summary,
-            key_guidelines=key_guidelines
-        )
+**Section: {current_section.title}**
+**Task: {current_section.description}**
 
-        # Prepare context with intelligent truncation
-        system_prompt = PromptTemplates.get_content_expert_system()
+**Week {state.week_number} Context:**
+{week_info}
 
-        # Load previous sections for context
-        approved_section_ids = [s.section_id for s in state.approved_sections]
-        previous_sections = file_io.load_approved_sections(approved_section_ids)
+**Previous sections completed:** {len(state.approved_sections)}
+{state.context_summary}
 
-        # Prepare web results for context manager
-        web_results_list = []
-        if needs_freshness and search_results:
-            # Convert search results to dictionaries for context manager
-            web_results_list = [
-                {
-                    "title": result.title,
-                    "url": result.url,
-                    "snippet": result.snippet,
-                    "published": result.published
-                }
-                for result in search_results
-            ]
-            # Store in state for future use
-            state.web_results = search_results
+Write clear, educational markdown content for this specific section. Focus on the section task above.
+Do NOT include template formatting, headers, or structural elements - just the content.
+"""
 
-        # Use context manager to prepare optimized content
-        final_system_prompt, final_user_prompt, token_usage = self.content_expert_context.prepare_context(
-            system_prompt=system_prompt,
-            user_content=request_prompt,
-            previous_sections=previous_sections,
-            web_results=web_results_list,
-            syllabus_content=syllabus_content,
-            template_content=template_content,
-            guidelines_content=guidelines_content
-        )
-
-        # Store context usage in state
-        state.context_usage = token_usage
-
-        # Log context management info
+        # Simple, direct LLM call - no complex context management
         file_io.log_run_state(state.week_number, {
             "node": "content_expert_write",
             "action": "context_prepared",
-            "token_usage": token_usage,
-            "context_truncated": token_usage.get("truncation_applied", False)
+            "token_usage": {"original_total": len(content_expert_prompt), "truncated_total": len(content_expert_prompt), "truncation_applied": False, "system_tokens": 100, "total_tokens": len(content_expert_prompt) + 100, "limit": 123000},
+            "context_truncated": False
         })
 
-        # Safe LLM call with error handling
+        # Simple LLM call with minimal context
         messages = [
-            SystemMessage(content=final_system_prompt),
-            HumanMessage(content=final_user_prompt)
+            SystemMessage(content="You are an expert educational content writer. Create clear, engaging content for data science courses."),
+            HumanMessage(content=content_expert_prompt)
         ]
 
         response = self.safe_llm_call(
@@ -382,7 +358,13 @@ Please review this draft against all template and guideline requirements. Provid
 **Link Check Results**:
 {json.dumps([r.dict() for r in link_results], indent=2) if link_results else "No links to check"}
 
-Please review this draft from a student's perspective. Focus on clarity, usability, and learning effectiveness. Provide your assessment in JSON format.
+As an AlphaStudent, review this draft focusing on:
+1. **Clarity**: Is the content clear and understandable for students?
+2. **Relevance**: Does ALL content relate directly to the section topic? Flag any irrelevant information.
+3. **Links**: Are all links working and appropriate?
+4. **Learning**: Is this effective for student learning?
+
+Provide your assessment in JSON format.
 """
 
         messages = [

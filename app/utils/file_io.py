@@ -25,8 +25,8 @@ class FileIO:
 
         return CourseInputs(
             week_number=week_number,
-            syllabus_path=str(input_dir / "course_syllabus.docx"),
-            template_path=str(input_dir / "template.docx"),
+            syllabus_path=str(input_dir / "syllabus.md"),
+            template_path=str(input_dir / "Weekly_Content_Template_AUG_GC_V.2.docx"),
             guidelines_path=str(input_dir / "guidelines.md"),
             sections_config_path=str(self.base_path / "config" / "sections.json"),
             course_config_path=str(self.base_path / "config" / "course_config.yaml")

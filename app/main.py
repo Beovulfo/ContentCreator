@@ -19,6 +19,11 @@ class CourseContentGenerator:
 
     def __init__(self, base_path: str = "."):
         self.base_path = Path(base_path)
+        self.workflow_nodes = None
+        self.graph = None
+
+    def initialize_after_secrets_loaded(self):
+        """Initialize components that require API keys"""
         self.workflow_nodes = WorkflowNodes()
         self.graph = self._build_workflow_graph()
 
@@ -46,12 +51,12 @@ class CourseContentGenerator:
             """Determine whether to continue with sections or finalize"""
             if state.current_index >= len(state.sections):
                 return "finalize"
-            return "write_section"
+            return "content_expert_write"
 
         def should_revise_or_approve(state: RunState) -> str:
             """Determine whether section needs revision or can be approved"""
             if not state.education_review or not state.alpha_review:
-                return "write_section"  # Something went wrong, restart section
+                return "revise_section"  # Something went wrong, restart section
 
             both_approved = state.education_review.approved and state.alpha_review.approved
             max_revisions_reached = state.revision_count >= state.max_revisions
@@ -65,7 +70,7 @@ class CourseContentGenerator:
             "program_director_request_section",
             should_continue_sections,
             {
-                "write_section": "content_expert_write",
+                "content_expert_write": "content_expert_write",
                 "finalize": "program_director_finalize_week"
             }
         )
@@ -296,6 +301,7 @@ Configuration Files:
     # Initialize generator and run
     try:
         generator = CourseContentGenerator()
+        generator.initialize_after_secrets_loaded()
         result = generator.generate_week(
             week_number=week_number,
             sections_config=args.sections,
