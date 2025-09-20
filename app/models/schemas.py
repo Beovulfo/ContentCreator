@@ -58,6 +58,7 @@ class RunState(BaseModel):
     web_results: Optional[List[WebSearchResult]] = Field(default=None, description="Current web search results")
     context_usage: Optional[Dict[str, int]] = Field(default=None, description="Token usage tracking")
     optimization_context: Optional[Dict[str, Any]] = Field(default=None, description="Revision optimization context")
+    final_coherence_review: Optional[Dict[str, Any]] = Field(default=None, description="ProgramDirector final review results")
 
 
 class LinkCheckResult(BaseModel):

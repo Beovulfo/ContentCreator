@@ -7,7 +7,7 @@ from langchain.schema import HumanMessage, SystemMessage
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.models.schemas import RunState, SectionDraft, ReviewNotes
-from app.agents.prompts import PromptTemplates, PromptBuilder
+from app.agents.prompts import PromptTemplates
 from app.tools import web, links
 from app.utils.file_io import file_io
 from app.utils.context_manager import ContextManager
@@ -138,8 +138,11 @@ class WorkflowNodes(RobustWorkflowMixin):
         approved_section_ids = [s.section_id for s in state.approved_sections]
         previous_sections = file_io.load_approved_sections(approved_section_ids)
 
-        # Build context summary
-        context_summary = PromptBuilder.build_section_context(previous_sections)
+        # Build simple context summary
+        if previous_sections:
+            context_summary = f"Previous sections completed: {', '.join([s.split('/')[-1] for s in previous_sections])}"
+        else:
+            context_summary = "This is the first section."
         state.context_summary = context_summary
 
         file_io.log_run_state(state.week_number, {
@@ -153,16 +156,17 @@ class WorkflowNodes(RobustWorkflowMixin):
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def content_expert_write(self, state: RunState) -> RunState:
-        """ContentExpert writes the section draft - only gets section instructions and syllabus"""
+        """ContentExpert (WRITER) creates/revises educational content based on Editor and Reviewer feedback"""
         current_section = state.sections[state.current_index]
         course_inputs = file_io.load_course_inputs(state.week_number)
 
         # ContentExpert ONLY gets:
         # 1. Section-specific instructions from ProgramDirector
         # 2. Week-specific syllabus content
-        # 3. Previous section context (minimal)
+        # 3. Guidelines.md for writing standards
+        # 4. Previous section context (minimal)
 
-        # Load ONLY the syllabus (not template or guidelines)
+        # Load syllabus AND guidelines for ContentExpert
         if course_inputs.syllabus_path.endswith('.md'):
             syllabus_content = self.safe_file_operation(
                 lambda: file_io.read_markdown_file(course_inputs.syllabus_path),
@@ -174,12 +178,19 @@ class WorkflowNodes(RobustWorkflowMixin):
                 "read_syllabus_docx"
             )
 
+        # Also load guidelines for content standards
+        guidelines_content = self.safe_file_operation(
+            lambda: file_io.read_markdown_file(course_inputs.guidelines_path),
+            "read_guidelines"
+        )
+
         # Extract only Week-specific information from syllabus
         week_info = self._extract_week_info(syllabus_content, state.week_number)
 
         # Optional web search for freshness (minimal)
         search_results = []
-        if "latest" in current_section.description.lower() or "current" in current_section.description.lower():
+        needs_freshness = "latest" in current_section.description.lower() or "current" in current_section.description.lower()
+        if needs_freshness:
             search_query = f"{current_section.title} data science latest 2024 2025"
             search_results = self.safe_web_search(
                 lambda q: web.search(q, top_k=3),  # Reduced from 5 to 3
@@ -192,22 +203,43 @@ class WorkflowNodes(RobustWorkflowMixin):
                 "query": search_query
             })
 
-        # Build minimal prompt for ContentExpert (ONLY section task + week info)
-        content_expert_prompt = f"""
-You are the ContentExpert. Write ONLY the content for this section:
+        # Use simplified prompt method
+        section_instruction = PromptTemplates.get_section_instruction(
+            current_section.title,
+            current_section.description,
+            week_info
+        )
 
-**Section: {current_section.title}**
-**Task: {current_section.description}**
+        # Build revision context if this is a revision
+        revision_context = ""
+        if state.revision_count > 0:
+            revision_context = "\n**REVISION FEEDBACK TO ADDRESS:**\n"
+            if state.education_review and not state.education_review.approved:
+                revision_context += f"EDITOR FEEDBACK (must address):\n"
+                for fix in state.education_review.required_fixes:
+                    revision_context += f"- {fix}\n"
+            if state.alpha_review and not state.alpha_review.approved:
+                revision_context += f"REVIEWER FEEDBACK (must address):\n"
+                for fix in state.alpha_review.required_fixes:
+                    revision_context += f"- {fix}\n"
+            if hasattr(state, 'optimization_context') and state.optimization_context:
+                revision_context += f"\nFOCUS AREAS for this revision: {', '.join(state.optimization_context['focus_areas'])}\n"
 
-**Week {state.week_number} Context:**
-{week_info}
+        # Add guidelines context for writing standards
+        content_expert_prompt = f"""{section_instruction}
 
-**Previous sections completed:** {len(state.approved_sections)}
+**Writing Guidelines (follow these standards):**
+{guidelines_content[:800]}
+
+**Previous Context:**
 {state.context_summary}
 
-Write clear, educational markdown content for this specific section. Focus on the section task above.
-Do NOT include template formatting, headers, or structural elements - just the content.
-"""
+**Web Search Results (if relevant):**
+{json.dumps(search_results[:2], indent=2) if search_results else "No recent sources needed."}
+
+{revision_context}
+
+{"Write clear, educational content following the guidelines above." if state.revision_count == 0 else f"Revise the content below to address the feedback above while maintaining educational quality.{chr(10)}{chr(10)}**PREVIOUS DRAFT TO REVISE:**{chr(10)}{state.current_draft.content_md if state.current_draft else 'No previous draft found'}"}"""
 
         # Simple, direct LLM call - no complex context management
         file_io.log_run_state(state.week_number, {
@@ -219,7 +251,7 @@ Do NOT include template formatting, headers, or structural elements - just the c
 
         # Simple LLM call with minimal context
         messages = [
-            SystemMessage(content="You are an expert educational content writer. Create clear, engaging content for data science courses."),
+            SystemMessage(content=PromptTemplates.get_content_expert_system()),
             HumanMessage(content=content_expert_prompt)
         ]
 
@@ -258,7 +290,7 @@ Do NOT include template formatting, headers, or structural elements - just the c
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def education_expert_review(self, state: RunState) -> RunState:
-        """EducationExpert reviews the draft"""
+        """EducationExpert (EDITOR) reviews the draft for template compliance and educational standards"""
         if not state.current_draft:
             return state
 
@@ -279,7 +311,16 @@ Do NOT include template formatting, headers, or structural elements - just the c
 **Guidelines to Check**:
 {guidelines_content[:1000]}...
 
-Please review this draft against all template and guideline requirements. Provide your assessment in JSON format.
+Please review this draft against all template and guideline requirements.
+
+Provide your assessment EXACTLY in this JSON format:
+{{
+  "approved": true/false,
+  "required_fixes": ["fix 1", "fix 2"],
+  "optional_suggestions": ["suggestion 1"]
+}}
+
+If approved is false, you MUST provide specific required_fixes.
 """
 
         messages = [
@@ -323,7 +364,7 @@ Please review this draft against all template and guideline requirements. Provid
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def alpha_student_review(self, state: RunState) -> RunState:
-        """AlphaStudent reviews the draft"""
+        """AlphaStudent (REVIEWER) reviews the draft from a student learning perspective"""
         if not state.current_draft:
             return state
 
@@ -364,7 +405,14 @@ As an AlphaStudent, review this draft focusing on:
 3. **Links**: Are all links working and appropriate?
 4. **Learning**: Is this effective for student learning?
 
-Provide your assessment in JSON format.
+Provide your assessment EXACTLY in this JSON format:
+{{
+  "approved": true/false,
+  "required_fixes": ["fix 1", "fix 2"],
+  "optional_suggestions": ["suggestion 1"]
+}}
+
+If approved is false, you MUST provide specific required_fixes.
 """
 
         messages = [
@@ -482,8 +530,118 @@ Provide your assessment in JSON format.
 
         return state
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    def program_director_final_review(self, state: RunState) -> RunState:
+        """ProgramDirector (REVIEWER) performs final coherence review of complete weekly content"""
+        if len(state.approved_sections) != len(state.sections):
+            file_io.log_run_state(state.week_number, {
+                "node": "program_director_final_review",
+                "action": "error",
+                "error": f"Cannot review incomplete week: {len(state.approved_sections)}/{len(state.sections)} sections"
+            })
+            return state
+
+        # Load course inputs for WLO context
+        course_inputs = file_io.load_course_inputs(state.week_number)
+        syllabus_content = self.safe_file_operation(
+            lambda: file_io.read_markdown_file(course_inputs.syllabus_path) if course_inputs.syllabus_path.endswith('.md')
+                   else file_io.read_docx_file(course_inputs.syllabus_path),
+            "read_syllabus_for_final_review"
+        )
+        week_info = self._extract_week_info(syllabus_content, state.week_number)
+
+        # Compile all section content for review
+        all_content = []
+        for section in state.approved_sections:
+            all_content.append(f"## {section.section_id}\n{section.content_md}\n")
+
+        complete_week_content = "\n".join(all_content)
+
+        # ProgramDirector reviews as REVIEWER for coherence
+        final_review_prompt = f"""
+**FINAL COHERENCE REVIEW - Week {state.week_number}**
+
+**Weekly Learning Objectives (from syllabus):**
+{week_info}
+
+**Complete Weekly Content to Review:**
+{complete_week_content}
+
+**Your Task as REVIEWER:**
+Evaluate this complete weekly content for overall coherence, quality, and effectiveness as a unified learning experience.
+
+Provide your assessment EXACTLY in this JSON format:
+{{
+  "approved": true/false,
+  "overall_quality_score": 1-10,
+  "coherence_assessment": {{
+    "logical_flow": "assessment of content progression",
+    "wlo_coverage": "how well WLOs are addressed across all sections",
+    "inter_section_connections": "how sections relate and build on each other",
+    "academic_rigor": "appropriate for Master's level students",
+    "student_experience": "clarity and engagement for learners"
+  }},
+  "required_fixes": ["any critical issues that must be addressed"],
+  "optional_suggestions": ["improvements for next iteration"],
+  "approval_reason": "why approving or what needs improvement"
+}}
+
+Focus on the COMPLETE weekly learning experience, not individual sections.
+"""
+
+        messages = [
+            SystemMessage(content=PromptTemplates.get_program_director_final_review_system()),
+            HumanMessage(content=final_review_prompt)
+        ]
+
+        response = self.safe_llm_call(
+            self.program_director_llm,
+            messages,
+            f"ProgramDirector final review for Week {state.week_number}"
+        )
+
+        try:
+            review_data = json.loads(response.content)
+            state.final_coherence_review = {
+                "approved": review_data.get("approved", False),
+                "quality_score": review_data.get("overall_quality_score", 0),
+                "coherence_assessment": review_data.get("coherence_assessment", {}),
+                "required_fixes": review_data.get("required_fixes", []),
+                "optional_suggestions": review_data.get("optional_suggestions", []),
+                "approval_reason": review_data.get("approval_reason", "No reason provided")
+            }
+        except json.JSONDecodeError:
+            # Fallback if JSON parsing fails
+            state.final_coherence_review = {
+                "approved": False,
+                "quality_score": 0,
+                "coherence_assessment": {},
+                "required_fixes": ["ProgramDirector review failed - unable to parse assessment"],
+                "optional_suggestions": [],
+                "approval_reason": "Technical error in review process"
+            }
+
+        file_io.log_run_state(state.week_number, {
+            "node": "program_director_final_review",
+            "action": "final_review_completed",
+            "approved": state.final_coherence_review["approved"],
+            "quality_score": state.final_coherence_review["quality_score"],
+            "fixes_required": len(state.final_coherence_review["required_fixes"])
+        })
+
+        return state
+
     def program_director_finalize_week(self, state: RunState) -> RunState:
-        """Compile final weekly content file"""
+        """Compile final weekly content file after ProgramDirector approval"""
+        # Check if ProgramDirector has approved the content
+        if not hasattr(state, 'final_coherence_review') or not state.final_coherence_review.get("approved", False):
+            file_io.log_run_state(state.week_number, {
+                "node": "program_director_finalize_week",
+                "action": "error",
+                "error": "Cannot finalize week without ProgramDirector final approval"
+            })
+            return state
+
         if len(state.approved_sections) != len(state.sections):
             file_io.log_run_state(state.week_number, {
                 "node": "program_director_finalize_week",
@@ -507,7 +665,9 @@ Provide your assessment in JSON format.
             "action": "week_completed",
             "final_path": final_path,
             "total_sections": len(state.approved_sections),
-            "total_word_count": sum(s.word_count for s in state.approved_sections)
+            "total_word_count": sum(s.word_count for s in state.approved_sections),
+            "final_quality_score": state.final_coherence_review.get("quality_score", "N/A"),
+            "program_director_approved": True
         })
 
         return state

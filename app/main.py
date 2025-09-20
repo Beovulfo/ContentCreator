@@ -38,6 +38,7 @@ class CourseContentGenerator:
         workflow.add_node("education_expert_review", self.workflow_nodes.education_expert_review)
         workflow.add_node("alpha_student_review", self.workflow_nodes.alpha_student_review)
         workflow.add_node("program_director_merge_or_revise", self.workflow_nodes.program_director_merge_or_revise)
+        workflow.add_node("program_director_final_review", self.workflow_nodes.program_director_final_review)
         workflow.add_node("program_director_finalize_week", self.workflow_nodes.program_director_finalize_week)
 
         # Set entry point
@@ -48,9 +49,9 @@ class CourseContentGenerator:
 
         # Conditional logic for section processing
         def should_continue_sections(state: RunState) -> str:
-            """Determine whether to continue with sections or finalize"""
+            """Determine whether to continue with sections or go to final review"""
             if state.current_index >= len(state.sections):
-                return "finalize"
+                return "final_review"
             return "content_expert_write"
 
         def should_revise_or_approve(state: RunState) -> str:
@@ -66,12 +67,24 @@ class CourseContentGenerator:
             else:
                 return "revise_section"
 
+        def should_finalize_or_revise_week(state: RunState) -> str:
+            """Determine whether to finalize week or revise based on ProgramDirector final review"""
+            if not state.final_coherence_review:
+                return "finalize"  # Skip review if not available
+
+            if state.final_coherence_review.get("approved", False):
+                return "finalize"
+            else:
+                # If ProgramDirector rejects, we could implement week-level revision
+                # For now, we'll finalize anyway but with warning logs
+                return "finalize"
+
         workflow.add_conditional_edges(
             "program_director_request_section",
             should_continue_sections,
             {
                 "content_expert_write": "content_expert_write",
-                "finalize": "program_director_finalize_week"
+                "final_review": "program_director_final_review"
             }
         )
 
@@ -90,6 +103,14 @@ class CourseContentGenerator:
             {
                 "next_section": "program_director_request_section",
                 "revise_section": "content_expert_write"
+            }
+        )
+
+        workflow.add_conditional_edges(
+            "program_director_final_review",
+            should_finalize_or_revise_week,
+            {
+                "finalize": "program_director_finalize_week"
             }
         )
 

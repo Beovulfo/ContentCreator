@@ -1,3 +1,3 @@
-from .prompts import PromptTemplates, PromptBuilder
+from .prompts import PromptTemplates
 
-__all__ = ["PromptTemplates", "PromptBuilder"]
+__all__ = ["PromptTemplates"]

@@ -84,7 +84,7 @@ class RevisionOptimizer:
 
         # Determine revision strategy based on revision count
         revision_strategy = self._determine_revision_strategy(
-            resolved_feedback, revision_count, max_revisions
+            resolved_feedback, revision_count, max_revisions, education_review, alpha_review
         )
 
         return {
@@ -313,7 +313,9 @@ class RevisionOptimizer:
         self,
         feedback_list: List[PrioritizedFeedback],
         revision_count: int,
-        max_revisions: int
+        max_revisions: int,
+        education_review: ReviewNotes,
+        alpha_review: ReviewNotes
     ) -> Dict[str, Any]:
         """Determine the revision strategy based on feedback and revision count"""
 
@@ -338,14 +340,31 @@ class RevisionOptimizer:
                 "priority_counts": priority_counts
             }
 
-        # If no critical or high priority issues, approve
-        if priority_counts["CRITICAL"] == 0 and priority_counts["HIGH"] == 0:
+        # CRITICAL RULE: Never approve if EducationExpert explicitly rejected
+        if not education_review.approved:
             return {
-                "action": "approve",
-                "reason": "No critical or high priority issues",
-                "focus_areas": [],
+                "action": "revise",
+                "reason": "EducationExpert has not approved - must fix template/pedagogy issues",
+                "focus_areas": ["template", "wlo", "building_blocks"],
                 "priority_counts": priority_counts
             }
+
+        # CRITICAL RULE: Never approve if AlphaStudent explicitly rejected
+        if not alpha_review.approved:
+            return {
+                "action": "revise",
+                "reason": "AlphaStudent has not approved - must fix clarity/usability issues",
+                "focus_areas": ["clarity", "content"],
+                "priority_counts": priority_counts
+            }
+
+        # If both experts approved, we can approve regardless of low priority issues
+        return {
+            "action": "approve",
+            "reason": "Both EducationExpert and AlphaStudent approved",
+            "focus_areas": [],
+            "priority_counts": priority_counts
+        }
 
         # Determine focus areas for revision
         focus_areas = self._determine_focus_areas(feedback_list, revision_count, max_revisions)
