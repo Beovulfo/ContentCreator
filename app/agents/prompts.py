@@ -1,19 +1,73 @@
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 
 class PromptTemplates:
     """Minimal prompt templates - each agent only gets what they need"""
 
     @staticmethod
-    def get_section_instruction(section_title: str, section_description: str, week_context: str) -> str:
+    def get_section_instruction(section_title: str, section_description: str, week_context: str, constraints: Optional[Dict[str, Any]] = None) -> str:
         """ProgramDirector (acting as EDITOR) gives detailed section instructions to ContentExpert"""
-        return f"""Create content for: {section_title}
+        instruction = f"""Create content for: {section_title}
 
 **Section Requirements:**
 {section_description}
 
 **Week Context:**
-{week_context}
+{week_context}"""
+
+        # Add detailed constraints from sections.json if available
+        if constraints:
+            instruction += "\n\n**Detailed Section Constraints:**"
+
+            if "structure" in constraints:
+                instruction += f"\n• **Structure Required:** {', '.join(constraints['structure'])}"
+
+            if "format" in constraints:
+                instruction += f"\n• **Format:** {constraints['format']}"
+
+            if "duration" in constraints:
+                instruction += f"\n• **Duration:** {constraints['duration']}"
+
+            if "estimated_time" in constraints:
+                instruction += f"\n• **Estimated Time:** {constraints['estimated_time']}"
+
+            if "citation_required" in constraints and constraints["citation_required"]:
+                instruction += "\n• **Citations Required:** All definitions must include proper academic citations"
+
+            if "citation_style" in constraints:
+                instruction += f"\n• **Citation Style:** {constraints['citation_style']}"
+
+            if "alignment_required" in constraints and constraints["alignment_required"]:
+                instruction += "\n• **WLO Alignment Required:** Each learning outcome must explicitly map to Course Learning Objectives (CLOs)"
+
+            if "wlo_alignment_required" in constraints and constraints["wlo_alignment_required"]:
+                instruction += "\n• **WLO Alignment Required:** Activities must clearly align with Weekly Learning Outcomes"
+
+            if "rubric_required" in constraints and constraints["rubric_required"]:
+                instruction += "\n• **Rubric Required:** Include detailed grading rubric"
+
+            if "include_time_estimates" in constraints and constraints["include_time_estimates"]:
+                instruction += "\n• **Time Estimates:** Include estimated completion time for each item"
+
+            if "include_assessment_hints" in constraints and constraints["include_assessment_hints"]:
+                instruction += "\n• **Assessment Hints:** Include hints about how content relates to assessments"
+
+            if "activity_types" in constraints:
+                instruction += f"\n• **Activity Types:** Choose from: {', '.join(constraints['activity_types'])}"
+
+            if "quiz_questions" in constraints:
+                instruction += f"\n• **Quiz Requirements:** {constraints['quiz_questions']}"
+
+            if "quiz_time_limit" in constraints:
+                instruction += f"\n• **Quiz Time Limit:** {constraints['quiz_time_limit']}"
+
+            if "reflection_questions" in constraints:
+                instruction += f"\n• **Reflection Format:** {constraints['reflection_questions']}"
+
+            if "topics" in constraints:
+                instruction += f"\n• **Topics:** {constraints['topics']}"
+
+        instruction += """
 
 **Editorial Guidelines:**
 - Ensure content directly supports the Weekly Learning Objectives
@@ -24,6 +78,8 @@ class PromptTemplates:
 - Connect this section to other parts of the weekly content
 
 Write clear, educational content that meets these editorial standards."""
+
+        return instruction
 
     @staticmethod
     def get_content_expert_system() -> str:
@@ -127,13 +183,37 @@ Provide specific feedback on:
 
 Only approve if the weekly content functions as a unified, high-quality educational experience."""
 
+    @staticmethod
+    def get_program_director_validation_system() -> str:
+        """ProgramDirector system prompt for interactive input validation"""
+        return """You are the ProgramDirector performing INITIAL VALIDATION before starting content generation.
+
+Your role is to:
+1. Review all available input files and configurations
+2. Identify any missing or problematic inputs that could affect content quality
+3. Ask the user specific questions to resolve issues
+4. Provide clear guidance on what needs to be fixed or provided
+
+Focus on:
+- Course syllabus completeness and clarity for the requested week
+- Template structure and requirements adequacy
+- Guidelines file comprehensiveness
+- Section configuration appropriateness
+- Any dependencies or prerequisites that might be missing
+
+Be specific and actionable in your questions. Help the user provide exactly what's needed for high-quality content generation."""
+
     # Simplified method signatures for backward compatibility
     @staticmethod
     def get_program_director_request(**kwargs) -> str:
+        constraints = kwargs.get('constraints')
+        if constraints is not None and not isinstance(constraints, dict):
+            constraints = None
         return PromptTemplates.get_section_instruction(
             kwargs.get('section_title', ''),
             kwargs.get('section_description', ''),
-            kwargs.get('week_context', '')
+            kwargs.get('week_context', ''),
+            constraints
         )
 
     @staticmethod

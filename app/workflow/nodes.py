@@ -1,6 +1,7 @@
 import os
 import json
 import re
+import time
 from typing import Dict, List
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langchain.schema import HumanMessage, SystemMessage
@@ -13,6 +14,7 @@ from app.utils.file_io import file_io
 from app.utils.context_manager import ContextManager
 from app.utils.error_handler import RobustWorkflowMixin, with_error_handling, ErrorSeverity
 from app.utils.revision_optimizer import optimize_revision_cycle
+from app.utils.tracer import get_tracer
 
 
 class WorkflowNodes(RobustWorkflowMixin):
@@ -111,8 +113,237 @@ class WorkflowNodes(RobustWorkflowMixin):
 
         return '\n'.join(week_section) if week_section else f"Week {week_number} information not found"
 
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
+    def program_director_validate_inputs(self, state: RunState) -> RunState:
+        """ProgramDirector performs interactive input validation"""
+        tracer = get_tracer()
+        if tracer:
+            tracer.trace_node_start("program_director_validate_inputs")
+            tracer.start_validation()
+
+        # Load and validate all required inputs
+        try:
+            course_inputs = file_io.load_course_inputs(state.week_number)
+
+            # Load all input files to check their content
+            syllabus_content = self.safe_file_operation(
+                lambda: file_io.read_markdown_file(course_inputs.syllabus_path) if course_inputs.syllabus_path.endswith('.md')
+                       else file_io.read_docx_file(course_inputs.syllabus_path),
+                "read_syllabus_for_validation"
+            )
+
+            template_content = self.safe_file_operation(
+                lambda: file_io.read_docx_file(course_inputs.template_path),
+                "read_template_for_validation"
+            )
+
+            guidelines_content = self.safe_file_operation(
+                lambda: file_io.read_markdown_file(course_inputs.guidelines_path),
+                "read_guidelines_for_validation"
+            )
+
+        except Exception as e:
+            print(f"❌ Critical Error: Could not load input files: {str(e)}")
+            print("   Please ensure all required files exist:")
+            print("   • ./input/course_syllabus.docx (or .md)")
+            print("   • ./input/template.docx")
+            print("   • ./input/guidelines.md")
+
+            if tracer:
+                tracer.workflow_error(f"Input file loading failed: {str(e)}", "program_director_validate_inputs")
+
+            # Ask user to fix and retry
+            response = input("\nPress Enter after fixing the files, or 'q' to quit: ").strip().lower()
+            if response == 'q':
+                raise SystemExit("User chose to quit due to missing input files")
+
+            # Retry the method
+            return self.program_director_validate_inputs(state)
+
+        # Extract week-specific information
+        week_info = self._extract_week_info(syllabus_content, state.week_number)
+
+        # Prepare validation prompt
+        validation_prompt = f"""
+**INPUT VALIDATION REQUEST - Week {state.week_number}**
+
+Please review the following inputs and identify any missing or problematic elements:
+
+**Syllabus Content for Week {state.week_number}:**
+{week_info[:1000]}{'...' if len(week_info) > 1000 else ''}
+
+**Template Structure:**
+{template_content[:800]}{'...' if len(template_content) > 800 else ''}
+
+**Guidelines Summary:**
+{guidelines_content[:800]}{'...' if len(guidelines_content) > 800 else ''}
+
+**Sections to Generate:**
+{json.dumps([{'id': s.id, 'title': s.title, 'description': s.description} for s in state.sections], indent=2)}
+
+**Your Task:**
+1. Check if the syllabus contains sufficient information for Week {state.week_number}
+2. Verify the template provides clear structure requirements
+3. Ensure guidelines are comprehensive for content creation
+4. Confirm sections are appropriate and well-defined
+5. Identify any missing dependencies or unclear requirements
+
+IMPORTANT: Respond with ONLY valid JSON in exactly this format (no additional text, no markdown code blocks):
+
+{{
+  "validation_passed": true,
+  "issues_found": [],
+  "questions_for_user": [],
+  "recommendations": [],
+  "severity": "low"
+}}
+
+OR if issues are found:
+
+{{
+  "validation_passed": false,
+  "issues_found": ["specific issue 1", "specific issue 2"],
+  "questions_for_user": ["question 1", "question 2"],
+  "recommendations": ["recommendation 1", "recommendation 2"],
+  "severity": "medium"
+}}
+
+Do not include any text before or after the JSON. The response must be parseable by json.loads().
+"""
+
+        # Get validation from ProgramDirector
+        messages = [
+            SystemMessage(content=PromptTemplates.get_program_director_validation_system()),
+            HumanMessage(content=validation_prompt)
+        ]
+
+        response = self.safe_llm_call(
+            self.program_director_llm,
+            messages,
+            f"ProgramDirector input validation for Week {state.week_number}"
+        )
+
+        # Parse validation response with better error handling
+        validation_passed = True  # Default to passed if parsing fails
+        issues = []
+        questions = []
+        recommendations = []
+        severity = "low"
+
+        try:
+            # Try to extract JSON from response content
+            content = response.content.strip()
+
+            # Look for JSON block in markdown code blocks first
+            json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+            if json_match:
+                json_content = json_match.group(1)
+            else:
+                # Look for JSON object with proper brace matching
+                def find_json_object(text):
+                    """Find a complete JSON object in text using brace counting"""
+                    start_pos = text.find('{')
+                    if start_pos == -1:
+                        return None
+
+                    brace_count = 0
+                    for i, char in enumerate(text[start_pos:], start_pos):
+                        if char == '{':
+                            brace_count += 1
+                        elif char == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                return text[start_pos:i+1]
+                    return None
+
+                json_object = find_json_object(content)
+                json_content = json_object if json_object else content
+
+            validation_data = json.loads(json_content)
+            validation_passed = validation_data.get("validation_passed", False)
+            issues = validation_data.get("issues_found", [])
+            questions = validation_data.get("questions_for_user", [])
+            recommendations = validation_data.get("recommendations", [])
+            severity = validation_data.get("severity", "medium")
+
+        except (json.JSONDecodeError, AttributeError, TypeError) as e:
+            # If JSON parsing fails completely, try to extract information from text
+            content = response.content.lower()
+
+            # Simple heuristic: if response mentions problems/issues, assume validation failed
+            problem_keywords = ['issue', 'problem', 'missing', 'unclear', 'incomplete', 'error', 'wrong']
+            if any(keyword in content for keyword in problem_keywords):
+                validation_passed = False
+                issues = ["Unable to parse detailed validation - please check input files manually"]
+                severity = "medium"
+            else:
+                validation_passed = True
+
+            print(f"⚠️  Note: Validation response parsing failed ({str(e)[:50]}), using heuristic assessment")
+
+        if tracer:
+            tracer.validation_complete(issues if not validation_passed else None)
+
+        if not validation_passed:
+                print(f"\n⚠️  ProgramDirector identified {len(issues)} issues (Severity: {severity.upper()}):")
+                for i, issue in enumerate(issues, 1):
+                    print(f"   {i}. {issue}")
+
+                if questions:
+                    print(f"\n❓ Questions for you:")
+                    for i, question in enumerate(questions, 1):
+                        print(f"   {i}. {question}")
+                        user_answer = input("      Your answer: ").strip()
+                        if user_answer:
+                            print(f"      📝 Noted: {user_answer}")
+
+                if recommendations:
+                    print(f"\n💡 Recommendations:")
+                    for i, rec in enumerate(recommendations, 1):
+                        print(f"   {i}. {rec}")
+
+                # Ask if user wants to continue anyway
+                print(f"\n🤔 Issues found, but you can:")
+                print("   [c] Continue anyway (content quality may be affected)")
+                print("   [f] Fix issues and restart")
+                print("   [q] Quit")
+
+                while True:
+                    choice = input("Your choice [c/f/q]: ").strip().lower()
+                    if choice == 'c':
+                        print("⚠️  Continuing with identified issues...")
+                        break
+                    elif choice == 'f':
+                        print("Please fix the issues and restart the process.")
+                        raise SystemExit("User chose to fix issues")
+                    elif choice == 'q':
+                        print("Process cancelled by user.")
+                        raise SystemExit("User cancelled due to validation issues")
+                    else:
+                        print("Please enter 'c', 'f', or 'q'")
+
+        else:
+            print("✅ ProgramDirector validation passed - all inputs look good!")
+
+        file_io.log_run_state(state.week_number, {
+            "node": "program_director_validate_inputs",
+            "action": "validation_completed",
+            "validation_passed": validation_passed,
+            "issues_count": len(issues)
+        })
+
+        if tracer:
+            tracer.trace_node_complete("program_director_validate_inputs")
+
+        return state
+
     def program_director_plan(self, state: RunState) -> RunState:
         """Initialize the workflow and plan section generation"""
+        tracer = get_tracer()
+        if tracer:
+            tracer.trace_node_start("program_director_plan")
+            tracer.set_total_steps(len(state.sections))
+
         file_io.log_run_state(state.week_number, {
             "node": "program_director_plan",
             "action": "workflow_started",
@@ -125,14 +356,29 @@ class WorkflowNodes(RobustWorkflowMixin):
         state.approved_sections = []
         state.context_summary = ""
 
+        if tracer:
+            tracer.trace_node_complete("program_director_plan")
+
         return state
 
     def program_director_request_section(self, state: RunState) -> RunState:
         """Request the next section from ContentExpert"""
+        tracer = get_tracer()
+        if tracer:
+            tracer.trace_node_start("program_director_request_section", {"current_index": state.current_index})
+
         if state.current_index >= len(state.sections):
             return state  # All sections completed
 
         current_section = state.sections[state.current_index]
+
+        if tracer:
+            tracer.start_section(
+                current_section.id,
+                current_section.title,
+                state.current_index + 1,
+                len(state.sections)
+            )
 
         # Load context from previously approved sections
         approved_section_ids = [s.section_id for s in state.approved_sections]
@@ -152,12 +398,25 @@ class WorkflowNodes(RobustWorkflowMixin):
             "previous_sections": len(approved_section_ids)
         })
 
+        if tracer:
+            tracer.trace_node_complete("program_director_request_section")
+
         return state
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def content_expert_write(self, state: RunState) -> RunState:
         """ContentExpert (WRITER) creates/revises educational content based on Editor and Reviewer feedback"""
+        tracer = get_tracer()
         current_section = state.sections[state.current_index]
+
+        if tracer:
+            tracer.trace_node_start("content_expert_write", {
+                "section_id": current_section.id,
+                "revision_count": state.revision_count
+            })
+            tracer.start_writing(state.revision_count > 0, state.revision_count)
+
+        start_time = time.time()
         course_inputs = file_io.load_course_inputs(state.week_number)
 
         # ContentExpert ONLY gets:
@@ -203,11 +462,12 @@ class WorkflowNodes(RobustWorkflowMixin):
                 "query": search_query
             })
 
-        # Use simplified prompt method
+        # Use simplified prompt method with constraints from sections.json
         section_instruction = PromptTemplates.get_section_instruction(
             current_section.title,
             current_section.description,
-            week_info
+            week_info,
+            current_section.constraints
         )
 
         # Build revision context if this is a revision
@@ -277,6 +537,13 @@ class WorkflowNodes(RobustWorkflowMixin):
 
         state.current_draft = draft
         state.revision_count = 0  # Reset for new section
+
+        # Trace completion
+        if tracer:
+            duration = time.time() - start_time
+            tracer.writing_complete(word_count, len(extracted_urls), len(draft.citations))
+            tracer.trace_llm_call("ContentExpert", len(str(messages)), len(content_md), duration)
+            tracer.trace_node_complete("content_expert_write")
 
         file_io.log_run_state(state.week_number, {
             "node": "content_expert_write",

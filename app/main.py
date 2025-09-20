@@ -11,6 +11,7 @@ from app.models.schemas import RunState
 from app.utils.file_io import file_io
 from app.utils.input_validator import validate_inputs
 from app.utils.error_handler import create_error_summary
+from app.utils.tracer import initialize_tracer, get_tracer
 from app.workflow.nodes import WorkflowNodes
 
 
@@ -32,6 +33,7 @@ class CourseContentGenerator:
         workflow = StateGraph(RunState)
 
         # Add nodes
+        workflow.add_node("program_director_validate_inputs", self.workflow_nodes.program_director_validate_inputs)
         workflow.add_node("program_director_plan", self.workflow_nodes.program_director_plan)
         workflow.add_node("program_director_request_section", self.workflow_nodes.program_director_request_section)
         workflow.add_node("content_expert_write", self.workflow_nodes.content_expert_write)
@@ -42,9 +44,10 @@ class CourseContentGenerator:
         workflow.add_node("program_director_finalize_week", self.workflow_nodes.program_director_finalize_week)
 
         # Set entry point
-        workflow.set_entry_point("program_director_plan")
+        workflow.set_entry_point("program_director_validate_inputs")
 
         # Define edges
+        workflow.add_edge("program_director_validate_inputs", "program_director_plan")
         workflow.add_edge("program_director_plan", "program_director_request_section")
 
         # Conditional logic for section processing
@@ -119,14 +122,18 @@ class CourseContentGenerator:
         return workflow.compile()
 
     def generate_week(self, week_number: int, sections_config: str = None,
-                     course_config: str = None, dry_run: bool = False) -> Dict[str, Any]:
+                     course_config: str = None, dry_run: bool = False, verbose: bool = True) -> Dict[str, Any]:
         """Generate content for a specific week"""
+
+        # Initialize tracer for continuous progress tracking
+        tracer = initialize_tracer(week_number, verbose)
 
         print(f"🎓 Starting course content generation for Week {week_number}")
 
-        # Run comprehensive input validation
+        # Run basic file system input validation
         if not validate_inputs(str(self.base_path)):
-            print("💥 Input validation failed. Please fix the issues above before continuing.")
+            print("💥 Basic input validation failed. Please fix the file issues above before continuing.")
+            tracer.workflow_error("Basic input validation failed", "file_system_check")
             return {
                 "week_number": week_number,
                 "success": False,
@@ -176,6 +183,7 @@ class CourseContentGenerator:
             result["error_summary"] = error_summary
 
             if result["success"]:
+                tracer.workflow_complete(result["final_file"], result["total_word_count"])
                 print(f"✅ SUCCESS! Generated Week {week_number} content")
                 print(f"   📄 {result['sections_generated']} sections")
                 print(f"   📝 ~{result['total_word_count']} words total")
@@ -186,6 +194,7 @@ class CourseContentGenerator:
                     print(f"   ⚠️  Note: {error_summary['total_errors']} errors handled during generation")
                     print("   📋 Check logs for details on fallbacks used")
             else:
+                tracer.workflow_error(f"Incomplete generation: {result['sections_generated']}/{result['total_sections']} sections", "workflow_incomplete")
                 print(f"⚠️  PARTIAL SUCCESS - {result['sections_generated']}/{result['total_sections']} sections completed")
                 print(f"   💥 {error_summary['total_errors']} errors encountered")
 
@@ -194,6 +203,7 @@ class CourseContentGenerator:
         except Exception as e:
             error_msg = f"❌ ERROR during generation: {str(e)}"
             print(error_msg)
+            tracer.workflow_error(str(e), "main_workflow")
             file_io.log_run_state(week_number, {
                 "node": "main",
                 "action": "error",
@@ -279,6 +289,12 @@ Configuration Files:
         help="Preview what would be generated without actually creating content"
     )
 
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Reduce output verbosity (disable progress tracing)"
+    )
+
     args = parser.parse_args()
 
     # Load environment and secrets
@@ -327,7 +343,8 @@ Configuration Files:
             week_number=week_number,
             sections_config=args.sections,
             course_config=args.course_config,
-            dry_run=args.dry_run
+            dry_run=args.dry_run,
+            verbose=not args.quiet
         )
 
         if result.get("success"):
