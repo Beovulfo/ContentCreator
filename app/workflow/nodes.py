@@ -2,7 +2,8 @@ import os
 import json
 import re
 import time
-from typing import Dict, List
+import yaml
+from typing import Dict, List, Any
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langchain.schema import HumanMessage, SystemMessage
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -83,25 +84,31 @@ class WorkflowNodes(RobustWorkflowMixin):
             # Note: gpt-5-mini doesn't support custom temperature or max_completion_tokens
         )
 
-    def _extract_week_info(self, syllabus_content: str, week_number: int) -> str:
-        """Extract only the relevant week information from syllabus"""
-        lines = syllabus_content.split('\n')
-        week_section = []
-        capturing = False
+    def _extract_week_info(self, syllabus_content: str, week_number: int) -> Dict[str, Any]:
+        """Extract structured week information from syllabus using FileIO parser"""
+        return file_io.extract_week_info_from_syllabus(week_number, syllabus_content)
 
-        week_header = f"### Week {week_number}:"
+    def _format_week_context_for_prompt(self, week_info: Dict[str, Any], week_number: int) -> str:
+        """Format structured week information for use in prompts"""
+        context_parts = [
+            f"**Week {week_number} Overview:**",
+            week_info.get("overview", "No overview available"),
+            "",
+            "**Weekly Learning Objectives (WLOs) with CLO Mappings:**"
+        ]
 
-        for line in lines:
-            if line.startswith(week_header):
-                capturing = True
-                week_section.append(line)
-            elif capturing and line.startswith("### Week ") and not line.startswith(week_header):
-                # Found next week, stop capturing
-                break
-            elif capturing:
-                week_section.append(line)
+        for wlo in week_info.get("wlos", []):
+            context_parts.append(f"- **WLO{wlo['number']}:** {wlo['description']} (Maps to {wlo['clo_mapping']})")
 
-        return '\n'.join(week_section) if week_section else f"Week {week_number} information not found"
+        if week_info.get("bibliography"):
+            context_parts.extend([
+                "",
+                "**Required Bibliography for This Week:**"
+            ])
+            for ref in week_info["bibliography"]:
+                context_parts.append(f"- {ref}")
+
+        return "\n".join(context_parts)
 
     # =============================================================================
     # AUTONOMOUS W/E/R WORKFLOW NODES
@@ -165,6 +172,181 @@ class WorkflowNodes(RobustWorkflowMixin):
             tracer.trace_node_complete("request_next_section")
         return state
 
+    def batch_write_all_sections(self, state: RunState) -> RunState:
+        """Write all sections at once using ContentExpert"""
+        tracer = get_tracer()
+        if tracer:
+            tracer.trace_node_start("batch_write_all_sections")
+
+        print(f"📝 ContentExpert writing all {len(state.sections)} sections...")
+
+        # Clear any previous sections
+        state.approved_sections = []
+
+        for i, section_spec in enumerate(state.sections):
+            print(f"[{i+1}/{len(state.sections)}] ✍️ Writing: {section_spec.title}")
+
+            # Set current section context
+            state.current_index = i
+            state.revision_count = 0
+
+            # Load context from previously written sections in this batch
+            if state.approved_sections:
+                # Build context from already written sections
+                context_parts = []
+                for j, prev_section in enumerate(state.approved_sections):
+                    prev_spec = state.sections[j]
+                    summary = prev_section.content_md[:200].replace('\n', ' ').strip()
+                    if len(prev_section.content_md) > 200:
+                        summary += "..."
+                    context_parts.append(f"**{prev_spec.title}**: {summary}")
+
+                state.context_summary = f"Previously written sections:\n" + "\n\n".join(context_parts[-2:])  # Last 2 sections
+            else:
+                state.context_summary = "This is the first section being written."
+
+            # Generate content for this section (ContentExpert can read previous sections)
+            state = self.content_expert_write(state)
+
+            # Save the draft (mark as needing review)
+            if state.current_draft:
+                state.current_draft.needs_revision = True  # Will be reviewed later
+                state.approved_sections.append(state.current_draft)
+
+                # Save to individual files immediately (so next sections can read it)
+                file_path = file_io.save_section_draft(state.current_draft, backup=True)
+                print(f"   💾 Saved draft: {file_path}")
+                print(f"   📝 Generated {state.current_draft.word_count} words")
+
+        print(f"✅ All {len(state.sections)} sections written to individual files")
+
+        if tracer:
+            tracer.trace_node_complete("batch_write_all_sections")
+        return state
+
+    def batch_review_all_sections(self, state: RunState) -> RunState:
+        """Review all sections with EducationExpert and AlphaStudent"""
+        tracer = get_tracer()
+        if tracer:
+            tracer.trace_node_start("batch_review_all_sections")
+
+        print(f"📋 Reviewing all {len(state.approved_sections)} sections...")
+
+        # Load all existing sections for context (agents can see all files)
+        all_sections_context = file_io.load_all_temporal_sections()
+
+        sections_needing_revision = []
+
+        for i, section_draft in enumerate(state.approved_sections):
+            section_spec = state.sections[i]
+            print(f"[{i+1}/{len(state.approved_sections)}] 📋 Reviewing: {section_spec.title}")
+
+            # Set current context for reviews (include access to all other sections)
+            state.current_index = i
+            state.current_draft = section_draft
+            state.context_summary = self._build_full_context_summary(all_sections_context, i)
+
+            # Education Expert review (with access to all sections)
+            state = self.education_expert_review(state)
+            education_approved = state.education_review and state.education_review.approved
+
+            # Alpha Student review (with access to all sections)
+            state = self.alpha_student_review(state)
+            alpha_approved = state.alpha_review and state.alpha_review.approved
+
+            both_approved = education_approved and alpha_approved
+
+            if both_approved:
+                print(f"   ✅ {section_spec.title}: Approved by both reviewers")
+                section_draft.needs_revision = False
+            else:
+                print(f"   ❌ {section_spec.title}: Needs revision")
+                section_draft.needs_revision = True
+                sections_needing_revision.append(i)
+
+                # Collect issues
+                issues = []
+                if not education_approved and state.education_review:
+                    issues.extend([f"Editor: {fix}" for fix in state.education_review.required_fixes[:3]])
+                if not alpha_approved and state.alpha_review:
+                    issues.extend([f"Reviewer: {fix}" for fix in state.alpha_review.required_fixes[:3]])
+
+                if issues:
+                    print(f"      📝 Sample issues ({len(issues)}):")
+                    for issue in issues[:2]:  # Show first 2
+                        print(f"         • {issue}")
+
+        print(f"📊 Review summary: {len(state.approved_sections) - len(sections_needing_revision)}/{len(state.approved_sections)} sections approved")
+        if sections_needing_revision:
+            print(f"   🔄 Sections needing revision: {len(sections_needing_revision)}")
+
+        if tracer:
+            tracer.trace_node_complete("batch_review_all_sections")
+        return state
+
+    def batch_revise_if_needed(self, state: RunState) -> RunState:
+        """Revise sections that need improvement"""
+        tracer = get_tracer()
+        if tracer:
+            tracer.trace_node_start("batch_revise_if_needed")
+
+        # Increment batch revision count
+        state.batch_revision_count += 1
+
+        print(f"🔄 Batch revision attempt {state.batch_revision_count}/2")
+
+        # Load all existing sections for context (ContentExpert can see all files)
+        all_sections_context = file_io.load_all_temporal_sections()
+
+        sections_revised = 0
+        for i, section_draft in enumerate(state.approved_sections):
+            if hasattr(section_draft, 'needs_revision') and section_draft.needs_revision:
+                section_spec = state.sections[i]
+                print(f"[{i+1}/{len(state.approved_sections)}] ✏️ Revising: {section_spec.title}")
+
+                # Set context for revision (include access to all other sections)
+                state.current_index = i
+                state.current_draft = section_draft
+                state.revision_count = state.batch_revision_count
+                state.context_summary = self._build_full_context_summary(all_sections_context, i)
+
+                # Revise the section (ContentExpert has full context)
+                state = self.content_expert_write(state)
+
+                # Update the section in our list
+                if state.current_draft:
+                    state.approved_sections[i] = state.current_draft
+
+                    # Save revised version
+                    file_path = file_io.save_section_draft(state.current_draft, backup=True)
+                    print(f"   💾 Revised and saved: {file_path}")
+                    print(f"   📝 Generated {state.current_draft.word_count} words")
+                    sections_revised += 1
+
+        print(f"✅ Revised {sections_revised} sections")
+
+        if tracer:
+            tracer.trace_node_complete("batch_revise_if_needed")
+        return state
+
+    def _build_full_context_summary(self, all_sections: Dict[str, str], current_index: int) -> str:
+        """Build context summary including all available sections for agent reference"""
+        context_parts = []
+
+        # Add summary of all other sections
+        for section_id, content in all_sections.items():
+            if section_id != self.sections[current_index].id if current_index < len(getattr(self, 'sections', [])) else True:
+                # Get first 200 characters as summary
+                summary = content[:200].replace('\n', ' ').strip()
+                if len(content) > 200:
+                    summary += "..."
+                context_parts.append(f"**{section_id}**: {summary}")
+
+        if context_parts:
+            return f"Context from other sections:\n" + "\n\n".join(context_parts[:3])  # Limit to 3 sections
+        else:
+            return "This is the first section being written."
+
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def content_expert_write(self, state: RunState) -> RunState:
         """ContentExpert (WRITER) creates section content"""
@@ -205,11 +387,14 @@ class WorkflowNodes(RobustWorkflowMixin):
             f"{current_section.title} data science {state.week_number} latest"
         )
 
+        # Format week context for the prompt
+        week_context = self._format_week_context_for_prompt(week_info, state.week_number)
+
         # Build detailed section instruction
         section_instruction = PromptTemplates.get_section_instruction(
             current_section.title,
             current_section.description,
-            week_info,
+            week_context,
             current_section.constraints
         )
 
@@ -225,47 +410,61 @@ class WorkflowNodes(RobustWorkflowMixin):
             for fix in state.alpha_review.required_fixes:
                 revision_feedback += f"• {fix}\n"
 
-        # For now, skip outline generation to isolate the issue
-        outline_content = f"""
-        Section outline for {current_section.title}:
-        1. Introduce the key concepts with engaging narrative
-        2. Provide concrete examples and applications
-        3. Connect to learning objectives
-        4. Include relevant citations and references
-        5. Use flowing prose style throughout
-        """
+        # Format section constraints from sections.json for the prompt
+        section_constraints = ""
+        if current_section.constraints:
+            section_constraints = "\n**DETAILED SECTION REQUIREMENTS FROM SECTIONS.JSON:**\n"
 
-        # Write content directly
-        content_prompt = f"""
-{section_instruction}
+            # Add structure requirements
+            if "structure" in current_section.constraints:
+                section_constraints += f"Structure Required:\n"
+                for item in current_section.constraints["structure"]:
+                    section_constraints += f"• {item}\n"
 
-**Your Detailed Outline:**
-{outline_content}
+            # Add subsection details
+            if "subsections" in current_section.constraints:
+                section_constraints += f"\nSubsection Details:\n"
+                for subsection, details in current_section.constraints["subsections"].items():
+                    section_constraints += f"• {subsection.title()}: {details.get('content', 'Not specified')}\n"
+                    if "format" in details:
+                        section_constraints += f"  Format: {details['format']}\n"
+                    if details.get("citation_required"):
+                        section_constraints += f"  Citation Required: YES\n"
+                    if details.get("alignment_required"):
+                        section_constraints += f"  WLO Alignment Required: YES\n"
 
-**COMPLETE AUTHORING GUIDELINES (READ THOROUGHLY):**
-{guidelines_content}
+            # Add other constraints
+            for key, value in current_section.constraints.items():
+                if key not in ["structure", "subsections"]:
+                    section_constraints += f"• {key}: {value}\n"
+
+        # Build a comprehensive prompt with sections.json requirements
+        content_prompt = f"""Write educational content for: {current_section.title}
+
+**Week {state.week_number} Topic:** {week_info.get('overview', 'Data Science fundamentals')}
+
+**Learning Objectives for this week:**
+{chr(10).join([f'- WLO{wlo["number"]}: {wlo["description"]} ({wlo["clo_mapping"]})' for wlo in week_info.get('wlos', [])])}
+
+**Required Reading Materials:**
+{chr(10).join([f'- {ref}' for ref in week_info.get('bibliography', [])])}
+
+{section_constraints}
 
 {revision_feedback}
 
-**Available Web Research:**
-{json.dumps([result.model_dump() for result in search_results[:3]], indent=2) if search_results else "No recent search results available"}
+**CRITICAL REQUIREMENTS:**
+- Follow the EXACT structure and format specified in sections.json above
+- Use flowing narrative prose (no bullet points unless specifically required)
+- Include concrete examples and cite the required readings when relevant
+- Ensure all subsections are included as specified
+- Meet format requirements for each subsection
+- Include proper citations where required
+- Ensure WLO alignment where specified
 
-**Context from Previous Sections:**
-{state.context_summary[:400] if state.context_summary else "This is the first section"}
+Write complete educational content that teaches students about the week topic as a professor teaching Master's students about data science.
 
-Now write the complete section content following your outline.
-
-CRITICAL REQUIREMENTS:
-- Write in clear, engaging NARRATIVE PROSE (not bullet points or lists)
-- Tell a story that teaches the concepts progressively
-- Include concrete examples and practical applications
-- Integrate citations naturally within the narrative flow
-- Use proper markdown formatting with clear section headers (H2, H3)
-- Ensure content is educational and student-friendly at Master's level
-- Focus on comprehension and learning, not just information delivery
-
-Create the complete section content now.
-"""
+Start writing the educational content now:"""
 
         content_messages = [
             SystemMessage(content=PromptTemplates.get_content_expert_system()),
@@ -350,41 +549,60 @@ Create the complete section content now.
 
         current_section = state.sections[state.current_index]
 
-        # Load template and guidelines for review
-        course_inputs = file_io.load_course_inputs(state.week_number)
-        template_content = self.safe_file_operation(
-            lambda: file_io.read_markdown_file(course_inputs.template_path),
-            "read_template_for_review"
-        )
-        guidelines_content = self.safe_file_operation(
-            lambda: file_io.read_markdown_file(course_inputs.guidelines_path),
-            "read_guidelines_for_review"
+        # Load ONLY the three required files for EDITOR
+        # 1. Building Blocks requirements for multimedia and assessment compliance
+        building_blocks_content = self.safe_file_operation(
+            lambda: file_io.read_yaml_file("config/building_blocks_requirements.yaml"),
+            "read_building_blocks_for_review"
         )
 
-        # Build review prompt with full guidelines
+        # 2. Template mapping for structure requirements
+        template_mapping_content = self.safe_file_operation(
+            lambda: file_io.read_yaml_file("config/template_mapping.yaml"),
+            "read_template_mapping_for_review"
+        )
+
+        # 3. Sections specification (already loaded in state.sections)
+
+        # Calculate word count for length compliance checking
+        content_word_count = len(state.current_draft.content_md.split())
+
+        # Get template requirements for this section from template_mapping
+        section_template_info = template_mapping_content.get('sections', {}).get(current_section.id, {})
+        template_requirements = section_template_info.get('template_requirements', [])
+        implementation_details = section_template_info.get('implementation', {})
+
+        # Build review prompt using only the three required files
         education_review_prompt = f"""
 **SECTION TO REVIEW:**
 {state.current_draft.content_md}
 
-**COMPLETE EDITORIAL GUIDELINES (ENFORCE ALL):**
-{guidelines_content}
+**WORD COUNT ANALYSIS:**
+- Current word count: {content_word_count} words
+- Section: {current_section.id}
 
-**TEMPLATE REQUIREMENTS:**
-{self._extract_template_constraints(template_content, current_section.id)}
+**BUILDING BLOCKS V2 REQUIREMENTS (ENFORCE ALL MULTIMEDIA/ASSESSMENT STANDARDS):**
+{yaml.dump(building_blocks_content, default_flow_style=False, sort_keys=False)}
 
-**SECTION SPECIFICATION:**
+**TEMPLATE MAPPING REQUIREMENTS FOR THIS SECTION:**
+{yaml.dump(section_template_info, default_flow_style=False, sort_keys=False)}
+
+**SECTION SPECIFICATION (from sections.json):**
+- ID: {current_section.id}
 - Title: {current_section.title}
 - Description: {current_section.description}
 - Constraints: {json.dumps(current_section.constraints, indent=2)}
 
-Review this section thoroughly as the EDITOR. Your job is to enforce ALL guidelines strictly.
+Review this section thoroughly as the EDITOR. Your job is to enforce ALL requirements from the three configuration files.
 
 CRITICAL REVIEW FOCUS:
-1. NARRATIVE PROSE: Is content written in flowing paragraphs? Reject if bullet points/lists are used.
-2. GUIDELINE COMPLIANCE: Does content meet ALL authoring guidelines exactly?
-3. EDUCATIONAL QUALITY: Does content effectively teach at Master's level?
-4. CITATION INTEGRATION: Are citations properly integrated in APA format?
-5. WLO ALIGNMENT: Is connection to learning objectives explicit?
+1. TEMPLATE MAPPING COMPLIANCE: Does content meet all template requirements listed above for this section?
+2. BUILDING BLOCKS V2 COMPLIANCE: Check multimedia elements (figures, tables, videos), assessment questions, and accessibility requirements
+3. SECTIONS.JSON COMPLIANCE: Does content meet all constraints and requirements specified in the section specification?
+4. NARRATIVE PROSE: Is content written in flowing paragraphs? Reject if bullet points/lists are used inappropriately.
+5. EDUCATIONAL QUALITY: Does content effectively teach at Master's level?
+6. CITATION INTEGRATION: Are citations properly integrated when required?
+7. WLO ALIGNMENT: Is connection to learning objectives explicit where required?
 
 Return a JSON object with:
 {{
@@ -393,7 +611,10 @@ Return a JSON object with:
   "optional_suggestions": ["suggestion 1", "suggestion 2"]
 }}
 
-Be thorough and demanding. Only approve content that meets ALL standards.
+Be thorough and demanding. Only approve content that meets ALL requirements from:
+- Building Blocks V2 requirements
+- Template mapping requirements for this section
+- Section specification constraints
 """
 
         messages = [
@@ -784,10 +1005,6 @@ Be honest about whether this content effectively teaches data science concepts.
 
         return '\n'.join(wlo_section) if wlo_section else "Weekly Learning Objectives not found"
 
-    def _extract_template_constraints(self, template_content: str, section_id: str) -> str:
-        """Extract relevant template constraints for a section"""
-        # Simple extraction - just return relevant portion
-        return template_content[:800]  # First 800 chars as context
 
     def _extract_citations(self, content_md: str) -> List[str]:
         """Extract citations from markdown content"""

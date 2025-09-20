@@ -27,6 +27,7 @@ class SectionDraft(BaseModel):
     word_count: int = Field(description="Approximate word count")
     citations: List[str] = Field(default_factory=list, description="Bibliography entries")
     wlo_mapping: Dict[str, str] = Field(default_factory=dict, description="WLO alignment notes")
+    needs_revision: bool = Field(default=False, description="Whether this section needs revision after review")
 
 
 class ReviewNotes(BaseModel):
@@ -59,6 +60,7 @@ class RunState(BaseModel):
     context_usage: Optional[Dict[str, int]] = Field(default=None, description="Token usage tracking")
     optimization_context: Optional[Dict[str, Any]] = Field(default=None, description="Revision optimization context")
     final_coherence_review: Optional[Dict[str, Any]] = Field(default=None, description="ProgramDirector final review results")
+    batch_revision_count: int = Field(default=0, description="Number of batch revision cycles completed")
 
 
 class LinkCheckResult(BaseModel):

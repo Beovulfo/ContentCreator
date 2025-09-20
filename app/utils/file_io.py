@@ -12,11 +12,13 @@ class FileIO:
         self.base_path = Path(base_path)
         self.temporal_output_dir = self.base_path / "temporal_output"
         self.weekly_content_dir = self.base_path / "weekly_content"
+        self.output_dir = self.base_path / "output"
         self.run_logs_dir = self.base_path / "run_logs"
 
         # Ensure directories exist
         self.temporal_output_dir.mkdir(exist_ok=True)
         self.weekly_content_dir.mkdir(exist_ok=True)
+        self.output_dir.mkdir(exist_ok=True)
         self.run_logs_dir.mkdir(exist_ok=True)
 
     def load_course_inputs(self, week_number: int) -> CourseInputs:
@@ -138,6 +140,14 @@ class FileIO:
         with open(file_path, 'r', encoding='utf-8') as f:
             return f.read()
 
+    def read_yaml_file(self, file_path: str) -> Dict[str, Any]:
+        """Read content from a YAML file"""
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"YAML file not found: {file_path}")
+
+        with open(file_path, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
+
     def save_section_draft(self, section_draft: SectionDraft, backup: bool = True) -> str:
         """Save a section draft to temporal_output directory"""
         filename = f"{section_draft.section_id}.md"
@@ -185,6 +195,81 @@ class FileIO:
                 sections[section_id] = content
 
         return sections
+
+    def load_all_temporal_sections(self) -> Dict[str, str]:
+        """Load all existing sections from temporal_output for agent context"""
+        sections = {}
+
+        if not self.temporal_output_dir.exists():
+            return sections
+
+        for file_path in self.temporal_output_dir.glob("*.md"):
+            if file_path.suffix == ".md" and not file_path.name.endswith(".bak"):
+                try:
+                    content = self.read_markdown_file(str(file_path))
+                    # Remove YAML front matter
+                    if content.startswith("---"):
+                        parts = content.split("---", 2)
+                        if len(parts) >= 3:
+                            content = parts[2].strip()
+
+                    # Use filename without extension as section_id
+                    section_id = file_path.stem
+                    sections[section_id] = content
+
+                except Exception as e:
+                    print(f"⚠️ Warning: Could not read {file_path}: {e}")
+
+        return sections
+
+    def read_section_draft_from_file(self, section_id: str) -> Optional[SectionDraft]:
+        """Load a SectionDraft from temporal_output file"""
+        filename = f"{section_id}.md"
+        file_path = self.temporal_output_dir / filename
+
+        if not file_path.exists():
+            return None
+
+        try:
+            content = self.read_markdown_file(str(file_path))
+
+            # Parse YAML front matter if present
+            word_count = 0
+            if content.startswith("---"):
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    yaml_content = parts[1].strip()
+                    main_content = parts[2].strip()
+
+                    # Extract word_count from YAML
+                    for line in yaml_content.split('\n'):
+                        if line.strip().startswith('word_count:'):
+                            try:
+                                word_count = int(line.split(':')[1].strip())
+                            except (ValueError, IndexError):
+                                pass
+                else:
+                    main_content = content
+            else:
+                main_content = content
+
+            # Calculate word count if not found in YAML
+            if word_count == 0:
+                word_count = len(main_content.split())
+
+            # Create SectionDraft object
+            return SectionDraft(
+                section_id=section_id,
+                content_md=main_content,
+                word_count=word_count,
+                links=[],  # Will be extracted if needed
+                citations=[],  # Will be extracted if needed
+                wlo_mapping={}  # Will be extracted if needed
+            )
+
+        except Exception as e:
+            print(f"⚠️ Warning: Could not load section draft {section_id}: {e}")
+            return None
 
     def compile_weekly_content(self, week_number: int, sections: List[SectionDraft],
                              week_title: str = "", section_specs: List[SectionSpec] = None) -> str:
@@ -255,6 +340,15 @@ class FileIO:
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(final_content)
 
+        # Also save to output directory as weekContent.md
+        output_file_path = self.output_dir / "weekContent.md"
+        with open(output_file_path, 'w', encoding='utf-8') as f:
+            f.write(final_content)
+
+        print(f"📄 Final content saved to:")
+        print(f"   • {file_path}")
+        print(f"   • {output_file_path}")
+
         return str(file_path)
 
     def _extract_title_from_content(self, content: str) -> str:
@@ -290,6 +384,95 @@ class FileIO:
         """Get current timestamp in ISO format"""
         from datetime import datetime
         return datetime.now().isoformat()
+
+    def extract_week_info_from_syllabus(self, week_number: int, syllabus_content: str) -> Dict[str, Any]:
+        """Extract week-specific information from syllabus content"""
+        import re
+
+        week_info = {
+            "overview": "",
+            "wlos": [],
+            "bibliography": []
+        }
+
+        # Split content into lines for processing
+        lines = syllabus_content.split('\n')
+
+        # Find the week section
+        week_pattern = rf"### Week {week_number}:"
+        week_found = False
+        reading_section_found = False
+
+        for i, line in enumerate(lines):
+            # Look for the specific week
+            if re.match(week_pattern, line):
+                week_found = True
+                # Extract title
+                week_title = line.replace(f"### Week {week_number}:", "").strip()
+
+                # Look for overview in next lines
+                for j in range(i + 1, len(lines)):
+                    if lines[j].startswith("**Overview:**"):
+                        week_info["overview"] = lines[j].replace("**Overview:**", "").strip()
+                        break
+                    elif lines[j].startswith("###"):  # Next section
+                        break
+
+                # Look for WLOs in next lines
+                for j in range(i + 1, len(lines)):
+                    if lines[j].startswith("**Weekly Learning Objectives:**"):
+                        # Continue reading WLOs until next section
+                        for k in range(j + 1, len(lines)):
+                            if lines[k].startswith("- **WLO"):
+                                # Parse WLO
+                                wlo_match = re.match(r'- \*\*WLO(\d+):\*\* (.+) \(([^)]+)\)', lines[k])
+                                if wlo_match:
+                                    wlo_num, description, clo = wlo_match.groups()
+                                    week_info["wlos"].append({
+                                        "number": int(wlo_num),
+                                        "description": description.strip(),
+                                        "clo_mapping": clo.strip()
+                                    })
+                            elif lines[k].startswith("###"):  # Next section
+                                break
+                        break
+                    elif lines[j].startswith("###"):  # Next section
+                        break
+                break
+
+        # Find bibliography section for this week
+        in_reading_section = False
+        reading_pattern = rf"### Week {week_number}:"
+
+        for i, line in enumerate(lines):
+            # Look for "Required Reading Materials" section first
+            if line.strip() == "## Required Reading Materials":
+                in_reading_section = True
+                continue
+
+            if in_reading_section and re.match(reading_pattern, line):
+                # Found reading section for this week within Reading Materials section
+                for j in range(i + 1, len(lines)):
+                    if lines[j].startswith("- "):
+                        # This is a bibliography entry
+                        bibliography_entry = lines[j].replace("- ", "").strip()
+                        if bibliography_entry and bibliography_entry not in week_info["bibliography"]:
+                            week_info["bibliography"].append(bibliography_entry)
+                    elif lines[j].startswith("###"):  # Next week section
+                        break
+                    elif lines[j].startswith("##"):  # End of reading materials section
+                        break
+                break
+
+        return week_info
+
+    def load_syllabus_content(self, syllabus_path: str) -> str:
+        """Load syllabus content from markdown file"""
+        if not os.path.exists(syllabus_path):
+            raise FileNotFoundError(f"Syllabus file not found: {syllabus_path}")
+
+        with open(syllabus_path, 'r', encoding='utf-8') as f:
+            return f.read()
 
 
 # Convenience instance

@@ -2,76 +2,124 @@
   {
     "id": "01-overview",
     "title": "Overview",
-    "description": "Week overview and introduction to the topic",
+    "description": "Complete overview section containing introduction, WLOs, key words, learning activities table, and readings list",
+    "ordinal": 1,
     "constraints": {
-      "structure": ["Introduction paragraph (1-2 paragraphs)", "Guiding questions (2-3 questions)"],
-      "estimated_time": "10 minutes",
-      "format": "narrative"
+      "structure": [
+        "Introduction (1-2 paragraphs overview + 2-3 guiding questions)",
+        "Weekly Level Learning Outcomes (WLOs) (~3 WLOs with CLO mapping)",
+        "Key Words (definitions with proper citations)",
+        "Learning Activities (summary table - to be completed at end)",
+        "Readings List (with focus areas, rationale, time estimates)"
+      ],
+      "subsections": {
+        "introduction": {
+          "content": "1-2 paragraphs overview + 2-3 intriguing/challenging questions",
+          "format": "narrative"
+        },
+        "wlos": {
+          "content": "~3 Weekly Learning Outcomes with CLO mapping",
+          "format": "WLO1: [objective] (CLO1, CLO2)",
+          "alignment_required": true
+        },
+        "keywords": {
+          "content": "Main terminology with definitions and citations",
+          "format": "1. Term\\nDefinition: ...\\nCitation: ...",
+          "citation_required": true
+        },
+        "learning_activities": {
+          "content": "Summary table of all activities (Discovery 85min + Engagement 85min + Consolidation 42min)",
+          "note": "Complete at end of content production"
+        },
+        "readings_list": {
+          "content": "Required and supplemental materials",
+          "format": "Source\\n🔍 Focus Area: ...\\n💡 Rationale: ...\\n⏳ Estimated Time: ...",
+          "citation_style": "academic_reference"
+        }
+      },
+      "estimated_time": "Reading time varies based on content",
+      "format": "structured_sections"
     }
   },
   {
-    "id": "02-weekly-learning-outcomes",
-    "title": "Weekly Level Learning Outcomes (WLOs)",
-    "description": "Specific weekly learning objectives aligned with course objectives",
-    "constraints": {
-      "structure": ["Introduction text", "3 WLOs maximum", "CLO mapping for each WLO"],
-      "format": "WLO1: [objective] (CLO1, CLO2)",
-      "alignment_required": true
-    }
-  },
-  {
-    "id": "03-key-words",
-    "title": "Key Words",
-    "description": "Main terminology and definitions with proper citations",
-    "constraints": {
-      "structure": ["Keyword", "Definition", "Citation"],
-      "citation_required": true,
-      "format": "academic"
-    }
-  },
-  {
-    "id": "04-readings-list",
-    "title": "Readings List",
-    "description": "Required and supplemental reading materials with focus areas and rationale",
-    "constraints": {
-      "structure": ["Source citation", "Focus Area (🔍)", "Rationale (💡)", "Estimated Time (⏳)"],
-      "citation_style": "academic_reference",
-      "include_time_estimates": true
-    }
-  },
-  {
-    "id": "05-discovery-phase",
+    "id": "02-discovery",
     "title": "DISCOVERY (85 minutes)",
-    "description": "Main content topics with narrative explanations and activities",
+    "description": "Main learning content with topics, narratives, readings, activities, and assessment hints",
+    "ordinal": 2,
     "constraints": {
-      "duration": "85 minutes",
-      "structure": ["Topic titles", "Narrative content", "Reading references", "Embedded activities"],
-      "topics": "multiple topics possible",
-      "include_assessment_hints": true
+      "duration": "85 minutes total",
+      "structure": [
+        "Topic Title(s) (e.g., Topic 1: Change or Transformation?)",
+        "Narrative content (explanatory text with examples)",
+        "Reading references (integrated within narrative)",
+        "Interactive activities (drag-drop, matching, etc.)",
+        "Assessment Hints (guidance for exam preparation)"
+      ],
+      "content_guidelines": {
+        "topics": "Multiple topics possible - copy structure for each",
+        "narrative_style": "Educational, engaging, with real-world examples",
+        "reading_integration": "Reference readings within narrative flow",
+        "activities": "Interactive elements to reinforce learning",
+        "assessment_hints": "Separate section highlighting exam-relevant content"
+      },
+      "examples": [
+        "Position elements under change vs transformation",
+        "Click on results to see if choices are correct",
+        "Pool of words matching exercises"
+      ],
+      "format": "topic_based_sections"
     }
   },
   {
-    "id": "06-engagement-phase",
+    "id": "03-engagement",
     "title": "ENGAGEMENT (85 minutes)",
-    "description": "Interactive learning activities aligned with WLOs",
+    "description": "Graded interactive learning activities aligned with WLOs",
+    "ordinal": 3,
     "constraints": {
-      "duration": "85 minutes",
-      "structure": ["Activity Title", "Activity Type", "Aligned WLO", "Instructions", "Grading Rubric"],
+      "duration": "85 minutes total",
+      "structure": [
+        "Activity Title (descriptive name)",
+        "Activity Type (Discussion/Simulation/Case Study/Project)",
+        "Aligned Weekly Level Learning Outcome (WLO)",
+        "Instructions for Students (detailed guidance)",
+        "Grading Rubric (assessment criteria)"
+      ],
+      "activity_requirements": {
+        "graded": true,
+        "wlo_alignment_explicit": true,
+        "student_instructions": "Clear, detailed guidance including preparation requirements",
+        "rubric_detailed": "Specific assessment criteria and standards"
+      },
       "activity_types": ["Discussion", "Simulation", "Case Study", "Project"],
-      "wlo_alignment_required": true,
-      "rubric_required": true
+      "format": "structured_activity",
+      "note": "Recommend completing Discovery phase before engagement"
     }
   },
   {
-    "id": "07-consolidation-phase",
+    "id": "04-consolidation",
     "title": "CONSOLIDATION (42 minutes)",
-    "description": "Knowledge check, reflection, and summary activities",
+    "description": "Knowledge check quiz, reflection poll, and weekly summary with forward look",
+    "ordinal": 4,
     "constraints": {
-      "duration": "42 minutes",
-      "structure": ["Knowledge Check (quiz)", "Reflection Poll", "Summary and Looking Ahead"],
-      "quiz_questions": "maximum 10 questions",
-      "quiz_time_limit": "20 minutes",
-      "reflection_questions": "standardized format"
+      "duration": "42 minutes total",
+      "structure": [
+        "Knowledge Check (quiz with multiple question types)",
+        "Reflection Poll (standardized self-assessment questions)",
+        "Summary and Looking Ahead (week recap + next week preview)"
+      ],
+      "quiz_specifications": {
+        "total_questions": "Maximum 10 questions",
+        "attempts": "1 (one)",
+        "time_limit": "20 minutes",
+        "question_sources": "Use Building Blocks document for question templates"
+      },
+      "reflection_poll": {
+        "time_spent": "Less than 1 hour / 1-3 hours / 3-5 hours / More than 5 hours",
+        "understanding": "4-point scale from lost to fully confident",
+        "study_improvements": "Multiple choice options for next week changes"
+      },
+      "summary_format": "1 paragraph current week + 1 paragraph next week preparation",
+      "format": "mixed_assessment_and_reflection"
     }
   }
 ]

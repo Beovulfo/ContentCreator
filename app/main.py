@@ -29,75 +29,53 @@ class CourseContentGenerator:
         self.graph = self._build_workflow_graph()
 
     def _build_workflow_graph(self) -> StateGraph:
-        """Build the autonomous W/E/R workflow state machine"""
+        """Build the batch W/E/R workflow state machine (write all, then review all)"""
         workflow = StateGraph(RunState)
 
-        # Add nodes - simplified autonomous workflow
+        # Add nodes - batch approach: write all sections first, then review all
         workflow.add_node("initialize_workflow", self.workflow_nodes.initialize_workflow)
-        workflow.add_node("request_next_section", self.workflow_nodes.request_next_section)
-        workflow.add_node("content_expert_write", self.workflow_nodes.content_expert_write)
-        workflow.add_node("education_expert_review", self.workflow_nodes.education_expert_review)
-        workflow.add_node("alpha_student_review", self.workflow_nodes.alpha_student_review)
-        workflow.add_node("merge_section_or_revise", self.workflow_nodes.merge_section_or_revise)
+        workflow.add_node("batch_write_all_sections", self.workflow_nodes.batch_write_all_sections)
+        workflow.add_node("batch_review_all_sections", self.workflow_nodes.batch_review_all_sections)
+        workflow.add_node("batch_revise_if_needed", self.workflow_nodes.batch_revise_if_needed)
         workflow.add_node("finalize_complete_week", self.workflow_nodes.finalize_complete_week)
 
         # Set entry point
         workflow.set_entry_point("initialize_workflow")
 
-        # Define edges - simplified autonomous flow
-        workflow.add_edge("initialize_workflow", "request_next_section")
+        # Simple linear flow: Initialize → Write All → Review All → Revise (if needed) → Finalize
+        workflow.add_edge("initialize_workflow", "batch_write_all_sections")
+        workflow.add_edge("batch_write_all_sections", "batch_review_all_sections")
 
-        # Conditional logic for autonomous section processing
-        def should_continue_or_finalize(state: RunState) -> str:
-            """Determine whether to continue with next section or finalize week"""
-            if state.current_index >= len(state.sections):
-                return "finalize_week"
-            return "content_expert_write"
+        # Conditional: revise all sections if needed, otherwise finalize
+        def should_revise_or_finalize(state: RunState) -> str:
+            """Check if any sections need revision"""
+            # Count sections that need revision
+            sections_needing_revision = 0
+            for i, section_spec in enumerate(state.sections):
+                if i < len(state.approved_sections):
+                    # Check if this section was reviewed and needs revision
+                    section_draft = state.approved_sections[i]
+                    if hasattr(section_draft, 'needs_revision') and section_draft.needs_revision:
+                        sections_needing_revision += 1
 
-        def should_revise_or_continue(state: RunState) -> str:
-            """Autonomous decision: revise if both reviewers reject, otherwise continue"""
-            if not state.education_review or not state.alpha_review:
-                return "revise"  # Something went wrong, retry section
+            max_attempts_reached = getattr(state, 'batch_revision_count', 0) >= 2
 
-            both_approved = state.education_review.approved and state.alpha_review.approved
-            max_revisions_reached = state.revision_count >= state.max_revisions
-
-            if both_approved or max_revisions_reached:
-                return "continue"  # Accept section and move to next
+            if sections_needing_revision > 0 and not max_attempts_reached:
+                return "revise"
             else:
-                return "revise"  # Revise current section
+                return "finalize"
 
-        # Flow: Initialize → Request Section → Writer → Editor → Reviewer → Decision
         workflow.add_conditional_edges(
-            "request_next_section",
-            should_continue_or_finalize,
+            "batch_review_all_sections",
+            should_revise_or_finalize,
             {
-                "content_expert_write": "content_expert_write",
-                "finalize_week": "finalize_complete_week"
+                "revise": "batch_revise_if_needed",
+                "finalize": "finalize_complete_week"
             }
         )
 
-        # Writer/Editor/Reviewer chain
-        workflow.add_edge("content_expert_write", "education_expert_review")
-        workflow.add_edge("education_expert_review", "alpha_student_review")
-
-        # Decision point after reviews
-        workflow.add_conditional_edges(
-            "alpha_student_review",
-            lambda state: "merge_or_revise",
-            {"merge_or_revise": "merge_section_or_revise"}
-        )
-
-        # Continue to next section or revise current section
-        workflow.add_conditional_edges(
-            "merge_section_or_revise",
-            should_revise_or_continue,
-            {
-                "continue": "request_next_section",  # Move to next section
-                "revise": "content_expert_write"     # Revise current section
-            }
-        )
-
+        # After revision, go back to review
+        workflow.add_edge("batch_revise_if_needed", "batch_review_all_sections")
         workflow.add_edge("finalize_complete_week", END)
 
         return workflow.compile()
@@ -121,7 +99,8 @@ class CourseContentGenerator:
             week_number=week_number,
             sections=sections,
             current_index=0,
-            max_revisions=3
+            max_revisions=5,
+            batch_revision_count=0
         )
 
         if dry_run:
