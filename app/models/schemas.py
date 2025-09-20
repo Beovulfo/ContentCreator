@@ -61,6 +61,7 @@ class RunState(BaseModel):
     optimization_context: Optional[Dict[str, Any]] = Field(default=None, description="Revision optimization context")
     final_coherence_review: Optional[Dict[str, Any]] = Field(default=None, description="ProgramDirector final review results")
     batch_revision_count: int = Field(default=0, description="Number of batch revision cycles completed")
+    feedback_memory: List[str] = Field(default_factory=list, description="Accumulated feedback from all reviewers to avoid repeating mistakes")
 
 
 class LinkCheckResult(BaseModel):

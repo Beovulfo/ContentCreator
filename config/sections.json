@@ -101,7 +101,7 @@
     "description": "Knowledge check quiz, reflection poll, and weekly summary with forward look",
     "ordinal": 4,
     "constraints": {
-      "duration": "42 minutes total",
+      "duration": "42 minutes total - KEEP ALL SUBSECTIONS CONCISE",
       "structure": [
         "Knowledge Check (quiz with multiple question types)",
         "Reflection Poll (standardized self-assessment questions)",
@@ -118,7 +118,7 @@
         "understanding": "4-point scale from lost to fully confident",
         "study_improvements": "Multiple choice options for next week changes"
       },
-      "summary_format": "1 paragraph current week + 1 paragraph next week preparation",
+      "summary_format": "CONCISE: 1 paragraph current week recap + 1 paragraph next week preparation (max 2 paragraphs total)",
       "format": "mixed_assessment_and_reflection"
     }
   }

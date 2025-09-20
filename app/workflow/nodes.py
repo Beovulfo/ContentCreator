@@ -264,12 +264,18 @@ class WorkflowNodes(RobustWorkflowMixin):
                 section_draft.needs_revision = True
                 sections_needing_revision.append(i)
 
-                # Collect issues
+                # Collect issues and add to feedback memory
                 issues = []
                 if not education_approved and state.education_review:
                     issues.extend([f"Editor: {fix}" for fix in state.education_review.required_fixes[:3]])
+                    # Add all education expert feedback to memory (not just first 3)
+                    for fix in state.education_review.required_fixes:
+                        state.feedback_memory.append(f"EDITOR FEEDBACK [{section_spec.title}]: {fix}")
                 if not alpha_approved and state.alpha_review:
                     issues.extend([f"Reviewer: {fix}" for fix in state.alpha_review.required_fixes[:3]])
+                    # Add all alpha student feedback to memory (not just first 3)
+                    for fix in state.alpha_review.required_fixes:
+                        state.feedback_memory.append(f"REVIEWER FEEDBACK [{section_spec.title}]: {fix}")
 
                 if issues:
                     print(f"      📝 Sample issues ({len(issues)}):")
@@ -410,6 +416,16 @@ class WorkflowNodes(RobustWorkflowMixin):
             for fix in state.alpha_review.required_fixes:
                 revision_feedback += f"• {fix}\n"
 
+        # Add accumulated feedback memory to help avoid repeating mistakes
+        if state.feedback_memory:
+            revision_feedback += f"\n**IMPORTANT: LEARN FROM ALL PREVIOUS FEEDBACK (DO NOT REPEAT THESE MISTAKES):**\n"
+            # Show recent feedback first (most relevant)
+            recent_feedback = state.feedback_memory[-20:] if len(state.feedback_memory) > 20 else state.feedback_memory
+            for feedback_item in recent_feedback:
+                revision_feedback += f"• {feedback_item}\n"
+            if len(state.feedback_memory) > 20:
+                revision_feedback += f"• ... and {len(state.feedback_memory) - 20} more previous feedback items\n"
+
         # Format section constraints from sections.json for the prompt
         section_constraints = ""
         if current_section.constraints:
@@ -454,8 +470,15 @@ class WorkflowNodes(RobustWorkflowMixin):
 {revision_feedback}
 
 **CRITICAL REQUIREMENTS:**
+- START with the section title as an H2 header: ## {current_section.title}
 - Follow the EXACT structure and format specified in sections.json above
-- Use flowing narrative prose (no bullet points unless specifically required)
+- Use appropriate formatting for section type:
+  * Discovery/Engagement main content: Flowing narrative prose
+  * Quiz sections: Use bullet points and clear formatting for questions/answers
+  * Rubric sections: Use markdown tables for clear criteria presentation
+  * Overview/Consolidation: Mix narrative and bullet points as appropriate
+  * Consolidation final subsections: Keep concise (max 2 paragraphs)
+- Include multimedia content (videos, references, interactive elements) to enhance engagement
 - Include concrete examples and cite the required readings when relevant
 - Ensure all subsections are included as specified
 - Meet format requirements for each subsection
@@ -464,7 +487,7 @@ class WorkflowNodes(RobustWorkflowMixin):
 
 Write complete educational content that teaches students about the week topic as a professor teaching Master's students about data science.
 
-Start writing the educational content now:"""
+Start writing the educational content now, beginning with the section header:"""
 
         content_messages = [
             SystemMessage(content=PromptTemplates.get_content_expert_system()),
