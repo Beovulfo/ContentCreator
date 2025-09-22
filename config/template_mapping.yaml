@@ -109,7 +109,7 @@ sections:
       heading_level: "H2"
       duration: 42
       structure:
-        - "Knowledge Check (quiz with multiple question types)"
+        - "Knowledge Check (quiz with multiple question types) written as numbered list"
         - "Reflection Poll (standardized self-assessment questions)"
         - "Summary and Looking Ahead (week recap + next week preview)"
       quiz_specifications:
