@@ -208,7 +208,10 @@ Subtitles/captions available.
 - **Current Information**: Use recent data and examples
 - **Verified Facts**: Cross-check all factual claims
 - **Code Examples**: Test all code before inclusion
-- **Link Verification**: Ensure all URLs are functional
+- **Link Verification**: ALL URLs must be triple-checked and pass all three verification attempts
+- **Mandatory Links**: Readings list and all references MUST include working links
+- **Dataset Verification**: ALL recommended datasets must exist and be accessible
+- **Dataset Priority**: Prioritize Kaggle.com datasets over other sources
 
 ### Pedagogical Quality
 - **Clear Progression**: Build concepts logically
@@ -219,12 +222,16 @@ Subtitles/captions available.
 ## Length and Scope
 
 ### Section Guidelines
-- **Introduction**: 200-400 words
+- **Introduction**: MAXIMUM 250 WORDS (video-ready presentation of week expectations)
+- **What's in Store for You?**: Required section with 3-4 topics and short descriptions
 - **Learning Objectives**: 100-200 words
 - **Main Content Sections**: 800-1200 words each
 - **Activities**: 300-600 words each
 - **Assessment**: 400-800 words
 - **Summary**: 200-400 words
+- **Quiz Questions**: MUST include suggested answers or answer keys for all questions
+- **Learning Activities Table**: MUST be split per topic
+- **Discovery Section**: NO coding activities allowed (interactive only: drag-drop, matching, polls)
 
 ### Content Depth
 - **Master's Level**: Assume undergraduate foundation knowledge
@@ -239,6 +246,14 @@ Subtitles/captions available.
 - **Source Quality**: Prefer authoritative sites, peer-reviewed sources, official documentation
 - **Link Maintenance**: Use stable URLs when possible; provide alternative access methods
 - **Citation Requirements**: Include full URL and access date for web sources
+
+### Dataset Requirements
+- **Kaggle Priority**: ALWAYS prioritize datasets from Kaggle.com when recommending data sources
+- **Complete URLs**: Provide full Kaggle URLs in format: https://www.kaggle.com/datasets/[username]/[dataset-name]
+- **Real Datasets**: Use well-known, verified datasets (e.g., Titanic, House Prices, MNIST, Iris)
+- **Alternative Sources**: If not using Kaggle, prefer UCI ML Repository, data.gov, or Hugging Face Datasets
+- **Verification Required**: ALL recommended datasets MUST be verified to exist and be accessible
+- **No Placeholders**: NEVER use fictional or placeholder dataset names
 
 ### Industry Relevance
 - **Current Practices**: Reference current industry standards and practices
@@ -257,6 +272,29 @@ Content will be evaluated on:
 5. **Currency**: Includes current information where relevant
 6. **Completeness**: Covers all required elements thoroughly
 7. **Assessment Integration**: Rubrics align with WLOs and content
+
+## Quality Scoring (1-10 Scale)
+
+The AlphaStudent reviewer provides a quality score from 1-10 for each section:
+
+**Score Criteria:**
+- **10 = EXCELLENT**: Super engaging, highly relevant, crystal-clear narrative, perfectly clear student instructions during Engagement, ALL sources/references correct and working
+- **8-9 = VERY GOOD**: Engaging content, clear narrative, good instructions, all sources working
+- **6-7 = GOOD**: Decent content but could be more engaging or clearer, sources working
+- **4-5 = NEEDS IMPROVEMENT**: Lacks engagement or clarity, some sources may not work
+- **1-3 = POOR**: Confusing, not engaging, broken sources, unclear instructions
+
+**Score Breakdown (each 0-10):**
+1. **Engagement**: Is content captivating and motivating for students?
+2. **Relevance**: Does it directly support learning the week's data science topic?
+3. **Narrative Clarity**: Is the story/flow easy to follow and understand?
+4. **Instructions Clarity**: Are Engagement activity instructions crystal clear?
+5. **Sources/References**: Do ALL links work? Are datasets accessible? Citations complete?
+
+**Approval Thresholds:**
+- Score ≥8: Approve
+- Score 6-7: Approve with suggestions for improvement
+- Score <6: REJECT - required fixes needed
 
 ## Revision Guidelines
 

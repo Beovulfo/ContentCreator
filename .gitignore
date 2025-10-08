@@ -51,7 +51,6 @@ run_logs/*.jsonl
 
 # Input files (these should be provided by users)
 input/*.docx
-input/*.md
 
 # OS
 .DS_Store

@@ -29,53 +29,47 @@ class CourseContentGenerator:
         self.graph = self._build_workflow_graph()
 
     def _build_workflow_graph(self) -> StateGraph:
-        """Build the batch W/E/R workflow state machine (write all, then review all)"""
+        """Build section-by-section W/E/R workflow (complete each section before moving to next)"""
         workflow = StateGraph(RunState)
 
-        # Add nodes - batch approach: write all sections first, then review all
+        # SECTION-BY-SECTION APPROACH (BETTER FOR QUALITY)
+        # Process one section completely (write → review → revise → approve) before next section
         workflow.add_node("initialize_workflow", self.workflow_nodes.initialize_workflow)
-        workflow.add_node("batch_write_all_sections", self.workflow_nodes.batch_write_all_sections)
-        workflow.add_node("batch_review_all_sections", self.workflow_nodes.batch_review_all_sections)
-        workflow.add_node("batch_revise_if_needed", self.workflow_nodes.batch_revise_if_needed)
+        workflow.add_node("process_section", self.workflow_nodes.process_single_section_iteratively)
         workflow.add_node("finalize_complete_week", self.workflow_nodes.finalize_complete_week)
 
         # Set entry point
         workflow.set_entry_point("initialize_workflow")
 
-        # Simple linear flow: Initialize → Write All → Review All → Revise (if needed) → Finalize
-        workflow.add_edge("initialize_workflow", "batch_write_all_sections")
-        workflow.add_edge("batch_write_all_sections", "batch_review_all_sections")
+        # Flow: Initialize → Process Section (loop until approved) → Next Section or Finalize
+        workflow.add_edge("initialize_workflow", "process_section")
 
-        # Conditional: revise all sections if needed, otherwise finalize
-        def should_revise_or_finalize(state: RunState) -> str:
-            """Check if any sections need revision"""
-            # Count sections that need revision
-            sections_needing_revision = 0
-            for i, section_spec in enumerate(state.sections):
-                if i < len(state.approved_sections):
-                    # Check if this section was reviewed and needs revision
-                    section_draft = state.approved_sections[i]
-                    if hasattr(section_draft, 'needs_revision') and section_draft.needs_revision:
-                        sections_needing_revision += 1
+        # Conditional: continue with current section, move to next, or finalize
+        def should_continue_revise_or_finalize(state: RunState) -> str:
+            """Determine next step: revise current section, next section, or finalize"""
+            # If current section not approved yet, revise it
+            if state.current_index < len(state.sections):
+                # Check if section just got approved (moved to next index)
+                if len(state.approved_sections) < state.current_index + 1:
+                    # Still working on current section
+                    return "revise_current"
+                elif state.current_index < len(state.sections):
+                    # Move to next section
+                    return "next_section"
 
-            max_attempts_reached = getattr(state, 'batch_revision_count', 0) >= 2
-
-            if sections_needing_revision > 0 and not max_attempts_reached:
-                return "revise"
-            else:
-                return "finalize"
+            # All sections complete
+            return "finalize"
 
         workflow.add_conditional_edges(
-            "batch_review_all_sections",
-            should_revise_or_finalize,
+            "process_section",
+            should_continue_revise_or_finalize,
             {
-                "revise": "batch_revise_if_needed",
-                "finalize": "finalize_complete_week"
+                "revise_current": "process_section",  # Loop: revise current section
+                "next_section": "process_section",    # Process next section
+                "finalize": "finalize_complete_week"  # All done
             }
         )
 
-        # After revision, go back to review
-        workflow.add_edge("batch_revise_if_needed", "batch_review_all_sections")
         workflow.add_edge("finalize_complete_week", END)
 
         return workflow.compile()
@@ -281,9 +275,15 @@ Configuration Files:
     if azure_configured:
         print("🔑 Using Azure OpenAI configuration")
         print(f"   Endpoint: {os.getenv('AZURE_ENDPOINT')}")
-        print(f"   Deployment: {os.getenv('AZURE_DEPLOYMENT', 'gpt-5-mini')}")
+        print(f"   Default Deployment: {os.getenv('AZURE_DEPLOYMENT', 'gpt-5-mini')}")
+        gpt4o_deployment = os.getenv('AZURE_GPT4O_DEPLOYMENT')
+        if gpt4o_deployment:
+            print(f"   GPT-4o Deployment: {gpt4o_deployment} (for ContentExpert)")
     elif openai_configured:
         print("🔑 Using OpenAI configuration")
+        print(f"   ContentExpert: {os.getenv('MODEL_CONTENT_EXPERT', 'gpt-4o')}")
+        print(f"   EducationExpert: {os.getenv('MODEL_EDUCATION_EXPERT', 'gpt-4o-mini')}")
+        print(f"   AlphaStudent: {os.getenv('MODEL_ALPHA_STUDENT', 'gpt-4o-mini')}")
     else:
         print("⚠️  Warning: Unexpected configuration state")
 
