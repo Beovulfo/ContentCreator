@@ -55,6 +55,7 @@ sections:
     template_requirements:
       - "Main learning content with topics, narratives, readings, activities, and assessment hints"
       - "85 minutes total active learning time"
+      - "About 1500 words per topic (MAX 3 topics)"
       - "Multiple topics possible - copy structure for each"
       - "Narrative content with real-world examples"
       - "Reference readings integrated within narrative flow"
@@ -67,7 +68,7 @@ sections:
         - "Topic Title(s) (e.g., Topic 1: Change or Transformation?)"
         - "Narrative content (explanatory text with examples)"
         - "Reading references (integrated within narrative)"
-        - "Interactive activities (drag-drop, matching, etc.) - NO CODING"
+        - "Interactive activities (drag-drop, matching,  etc.) - NO CODING"
         - "Assessment Hints (guidance for exam preparation)"
       content_guidelines:
         topics: "Multiple topics possible - copy structure for each"

@@ -75,6 +75,10 @@ class RunState(BaseModel):
     final_coherence_review: Optional[Dict[str, Any]] = Field(default=None, description="ProgramDirector final review results")
     batch_revision_count: int = Field(default=0, description="Number of batch revision cycles completed")
     feedback_memory: List[str] = Field(default_factory=list, description="Accumulated feedback from all reviewers to avoid repeating mistakes")
+    score_history: List[Dict[str, Any]] = Field(default_factory=list, description="History of scores for tracking progression")
+    broken_links_details: List[Dict[str, Any]] = Field(default_factory=list, description="Detailed information about broken links for actionable feedback")
+    failed_datasets_details: List[Dict[str, Any]] = Field(default_factory=list, description="Detailed information about failed datasets for actionable feedback")
+    cached_template_guidelines: Optional[Dict[str, str]] = Field(default=None, description="Cached template and guidelines to avoid re-loading")
 
 
 class LinkCheckResult(BaseModel):
