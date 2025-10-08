@@ -89,7 +89,7 @@ Reading
 - "Click on results to see if you made the right choices"
 
 Assessment Hints
-Guidance to SMEs: This section highlights aspects of the weekly material which potentially contribute to students preparing better for their assessment. SMEs are free to shape this section in the way they feel is best for students. They can refer to critical aspects of the content, prompt students with progress questions, provide examples, etc.
+Guidance to ContentExperts (SMEs): This section highlights aspects of the weekly material which potentially contribute to students preparing better for their assessment. SMEs are free to shape this section in the way they feel is best for students. They can refer to critical aspects of the content, prompt students with progress questions, provide examples, etc.
 ```
 
 ### Content Guidelines:
