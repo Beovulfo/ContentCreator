@@ -72,27 +72,27 @@ class WorkflowNodes(RobustWorkflowMixin):
             self.education_expert_context = ContextManager(editor_deployment)
             self.alpha_student_context = ContextManager(reviewer_deployment)
         else:
-            # Fallback to regular OpenAI - using gpt-4o-mini for WRITER and EDITOR
-            content_model = os.getenv("MODEL_CONTENT_EXPERT", "gpt-4o-mini")
+            # Fallback to regular OpenAI - using gpt-4o for WRITER, gpt-4.1 for EDITOR and REVIEWER
+            content_model = os.getenv("MODEL_CONTENT_EXPERT", "gpt-4o")
             self.content_expert_llm = ChatOpenAI(
                 model=content_model,
                 temperature=0.7,  # Lowered to 0.7 to prevent gibberish
                 model_kwargs={"max_completion_tokens": 32000}
             )
             self.education_expert_llm = ChatOpenAI(
-                model="gpt-4o-mini",
+                model=os.getenv("MODEL_EDUCATION_EXPERT", "gpt-4.1"),
                 temperature=0.7,  # Focused temperature for consistent review
                 model_kwargs={"max_completion_tokens": 32000}
             )
             self.alpha_student_llm = ChatOpenAI(
-                model="gpt-4o-mini",
+                model=os.getenv("MODEL_ALPHA_STUDENT", "gpt-4.1"),
                 temperature=0.6,  # Lower temperature for consistent scoring
                 model_kwargs={"max_completion_tokens": 32000}
             )
             # Initialize context managers with OpenAI model names
             self.content_expert_context = ContextManager(content_model)
-            self.education_expert_context = ContextManager("gpt-4o")
-            self.alpha_student_context = ContextManager("gpt-4o")
+            self.education_expert_context = ContextManager(os.getenv("MODEL_EDUCATION_EXPERT", "gpt-4.1"))
+            self.alpha_student_context = ContextManager(os.getenv("MODEL_ALPHA_STUDENT", "gpt-4.1"))
 
         # Log agent configurations
         self._log_agent_configurations()

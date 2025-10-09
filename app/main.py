@@ -282,8 +282,8 @@ Configuration Files:
     elif openai_configured:
         print("🔑 Using OpenAI configuration")
         print(f"   ContentExpert: {os.getenv('MODEL_CONTENT_EXPERT', 'gpt-4o')}")
-        print(f"   EducationExpert: {os.getenv('MODEL_EDUCATION_EXPERT', 'gpt-4o-mini')}")
-        print(f"   AlphaStudent: {os.getenv('MODEL_ALPHA_STUDENT', 'gpt-4o-mini')}")
+        print(f"   EducationExpert: {os.getenv('MODEL_EDUCATION_EXPERT', 'gpt-4.1')}")
+        print(f"   AlphaStudent: {os.getenv('MODEL_ALPHA_STUDENT', 'gpt-4.1')}")
     else:
         print("⚠️  Warning: Unexpected configuration state")
 
