@@ -149,6 +149,60 @@ class WorkflowNodes(RobustWorkflowMixin):
         required_vars = ["AZURE_ENDPOINT", "AZURE_SUBSCRIPTION_KEY", "AZURE_API_VERSION"]
         return all(os.getenv(var) for var in required_vars)
 
+    def _validate_required_fix(self, fix: str) -> tuple[bool, list[str]]:
+        """
+        Validate that feedback is actionable and specific.
+
+        Checks:
+        - Must have location reference (section, paragraph, line, topic, subsection, introduction, etc.)
+        - Must have action verb (add, remove, fix, change, reduce, replace, improve, clarify, etc.)
+        - Should be concise (max 120 chars)
+        - Should not be vague
+
+        Returns:
+            (is_valid: bool, issues: list[str])
+        """
+        import re
+
+        issues = []
+
+        # Check for location specificity
+        location_patterns = [
+            r'\bsection\b', r'\bparagraph\b', r'\bline\b', r'\btopic\b',
+            r'\bsubsection\b', r'\bintroduction\b', r'\bconclusion\b',
+            r'\bheading\b', r'\btable\b', r'\bfigure\b', r'\bactivity\b',
+            r'\bquiz\b', r'\brubric\b', r'\bwlo\b', r'\bcitation\b',
+            r'\breading\b', r'\bbibliography\b', r'\breference\b',
+            r'\b\d+\.\d+\b',  # Match section numbers like "1.2"
+        ]
+        if not any(re.search(pattern, fix.lower()) for pattern in location_patterns):
+            issues.append("Missing location reference")
+
+        # Check for action verb
+        action_verbs = [
+            r'\badd\b', r'\bremove\b', r'\bfix\b', r'\bchange\b',
+            r'\breduce\b', r'\breplace\b', r'\bimprove\b', r'\bclarify\b',
+            r'\bupdate\b', r'\bexpand\b', r'\bshorten\b', r'\bdelete\b',
+            r'\binsert\b', r'\bmodify\b', r'\bcorrect\b', r'\brevise\b',
+            r'\binclude\b', r'\bensure\b', r'\bconvert\b', r'\brewrite\b',
+        ]
+        if not any(re.search(verb, fix.lower()) for verb in action_verbs):
+            issues.append("Missing action verb")
+
+        # Check length (should be concise)
+        if len(fix) > 120:
+            issues.append(f"Too long ({len(fix)} chars, max 120)")
+
+        # Check for vague patterns
+        vague_patterns = [
+            r'^content\b', r'^better\b', r'^more\b', r'^improve$',
+            r'^quality\b', r'^enhance\b', r'^overall\b',
+        ]
+        if any(re.match(pattern, fix.lower().strip()) for pattern in vague_patterns):
+            issues.append("Too vague")
+
+        return len(issues) == 0, issues
+
     def _extract_json_from_response(self, content: str) -> dict:
         """
         Extract valid JSON from response content, handling truncation and extra text.
@@ -1791,12 +1845,38 @@ Be thorough and demanding. Content must score 9 or 10 to be approved.
                 for i, edit in enumerate(direct_edits, 1):
                     print(f"      {i}. [{edit.edit_type}] {edit.reason}")
 
+            # ========================================================================
+            # FEEDBACK VALIDATION: Ensure all required_fixes are specific and actionable
+            # ========================================================================
+            raw_fixes = review_data.get("required_fixes", [])
+            validated_fixes = []
+            rejected_fixes = []
+
+            for fix in raw_fixes:
+                is_valid, issues = self._validate_required_fix(fix)
+                if is_valid:
+                    validated_fixes.append(fix)
+                else:
+                    rejected_fixes.append((fix, issues))
+
+            # Report validation results
+            if rejected_fixes:
+                print(f"\n   ⚠️  FEEDBACK VALIDATION: {len(rejected_fixes)} vague/non-actionable fixes rejected:")
+                for fix, issues in rejected_fixes:
+                    print(f"      ❌ \"{fix[:60]}...\" - Issues: {', '.join(issues)}")
+
+            if validated_fixes:
+                print(f"   ✅ FEEDBACK VALIDATION: {len(validated_fixes)} actionable fixes accepted")
+            else:
+                print(f"   ℹ️  No actionable fixes provided by EDITOR")
+            # ========================================================================
+
             state.education_review = ReviewNotes(
                 reviewer="EducationExpert",
                 approved=approved,
                 quality_score=quality_score,
                 score_breakdown=score_breakdown,
-                required_fixes=review_data.get("required_fixes", []),
+                required_fixes=validated_fixes,  # Use validated fixes only
                 optional_suggestions=review_data.get("optional_suggestions", []),
                 direct_edits=direct_edits
             )
@@ -2190,12 +2270,38 @@ Be honest about whether this content effectively teaches data science concepts. 
                     print(f"     - Instructions Clarity: {score_breakdown.get('instructions_clarity', 'N/A')}/10")
                     print(f"     - Sources/References: {score_breakdown.get('sources_references', 'N/A')}/10")
 
+            # ========================================================================
+            # FEEDBACK VALIDATION: Ensure all required_fixes are specific and actionable
+            # ========================================================================
+            raw_fixes = review_data.get("required_fixes", [])
+            validated_fixes = []
+            rejected_fixes = []
+
+            for fix in raw_fixes:
+                is_valid, issues = self._validate_required_fix(fix)
+                if is_valid:
+                    validated_fixes.append(fix)
+                else:
+                    rejected_fixes.append((fix, issues))
+
+            # Report validation results
+            if rejected_fixes:
+                print(f"\n   ⚠️  FEEDBACK VALIDATION: {len(rejected_fixes)} vague/non-actionable fixes rejected:")
+                for fix, issues in rejected_fixes:
+                    print(f"      ❌ \"{fix[:60]}...\" - Issues: {', '.join(issues)}")
+
+            if validated_fixes:
+                print(f"   ✅ FEEDBACK VALIDATION: {len(validated_fixes)} actionable fixes accepted")
+            else:
+                print(f"   ℹ️  No actionable fixes provided by REVIEWER")
+            # ========================================================================
+
             state.alpha_review = ReviewNotes(
                 reviewer="AlphaStudent",
                 approved=approved,
                 quality_score=quality_score,
                 score_breakdown=score_breakdown,
-                required_fixes=review_data.get("required_fixes", []),
+                required_fixes=validated_fixes,  # Use validated fixes only
                 optional_suggestions=review_data.get("optional_suggestions", []),
                 link_check_results=link_check_results
             )
@@ -2282,6 +2388,57 @@ Be honest about whether this content effectively teaches data science concepts. 
         # DYNAMIC MAX REVISIONS: Allow 2 iterations if either score is below 6
         editor_score = state.education_review.quality_score if state.education_review else 10
         reviewer_score = state.alpha_review.quality_score if state.alpha_review else 10
+
+        # ========================================================================
+        # QUALITY GATE: Automatic rollback if quality degrades significantly
+        # ========================================================================
+        if state.revision_count > 0 and hasattr(state, 'draft_history') and len(state.draft_history) > 1:
+            current_combined = (editor_score or 0) + (reviewer_score or 0)
+
+            # Find best previous draft
+            previous_drafts = state.draft_history[:-1]  # Exclude current draft
+            if previous_drafts:
+                best_draft = max(previous_drafts,
+                               key=lambda d: (d.get('editor_score', 0) or 0) + (d.get('reviewer_score', 0) or 0))
+                best_combined = (best_draft.get('editor_score', 0) or 0) + (best_draft.get('reviewer_score', 0) or 0)
+
+                # Check for significant degradation (>2 points total)
+                if current_combined < best_combined - 2:
+                    print(f"\n{'='*70}")
+                    print(f"⚠️  QUALITY GATE TRIGGERED: SIGNIFICANT DEGRADATION DETECTED")
+                    print(f"{'='*70}")
+                    print(f"   Best previous score: {best_combined}/20 (Revision {best_draft['revision']})")
+                    print(f"   Current score: {current_combined}/20 (Revision {state.revision_count})")
+                    print(f"   Degradation: {best_combined - current_combined} points")
+                    print(f"\n🔄 AUTOMATIC ROLLBACK: Reverting to best previous draft")
+                    print(f"   ✅ Restoring Revision {best_draft['revision']} content")
+                    print(f"   🛑 Stopping further iterations to prevent more degradation")
+                    print(f"{'='*70}\n")
+
+                    # Restore best draft content
+                    state.current_draft.content_md = best_draft['content_md']
+                    state.current_draft.word_count = best_draft['word_count']
+
+                    # Update reviews to reflect restored draft quality
+                    state.education_review.quality_score = best_draft['editor_score']
+                    state.education_review.approved = True  # Accept best draft
+                    state.alpha_review.quality_score = best_draft['reviewer_score']
+                    state.alpha_review.approved = True  # Accept best draft
+
+                    # Force stop iterations
+                    state.revision_count = 999  # Ensures max_revisions_reached = True
+                    both_approved = True  # Approve the restored draft
+
+                    # Log the rollback
+                    file_io.log_run_state(state.week_number, {
+                        "node": "merge_section_or_revise",
+                        "action": "quality_gate_rollback",
+                        "section": current_section.id,
+                        "restored_revision": best_draft['revision'],
+                        "degradation": best_combined - current_combined,
+                        "reason": f"Quality degraded from {best_combined}/20 to {current_combined}/20"
+                    })
+        # ========================================================================
 
         # If either score is below 6, allow up to 2 revisions; otherwise stick to 1
         if editor_score < 6 or reviewer_score < 6:
