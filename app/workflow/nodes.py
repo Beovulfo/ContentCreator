@@ -1756,12 +1756,14 @@ Return a JSON object with this EXACT format (keep it concise to avoid truncation
 
 **CRITICAL INSTRUCTIONS FOR EDITOR:**
 - ALWAYS leave "direct_edits" as an empty array: []
-- Put ALL feedback in "required_fixes" as SHORT, SPECIFIC instructions (max 100 chars each)
-- Format: "Location: Action needed"
+- Put ALL feedback in "required_fixes" as SHORT, SPECIFIC instructions (max 300 chars each)
+- Format: "Location: Action verb + specific change"
+- MUST start with location reference (section, paragraph, topic, line, etc.)
+- MUST include active action verb (add, remove, fix, change, reduce, replace, improve, clarify, update, expand, provide, split, etc.)
 - Example: "Section 1.2: Reduce to 250 words by removing examples"
 - Example: "Introduction: Add explicit WLO1 mapping"
 - Example: "Topic 1: Convert bullet points to narrative paragraphs"
-- Keep each fix SHORT to avoid JSON truncation - be concise!
+- Example: "1.6 Readings List: Provide full APA citations with working links"
 - Maximum 5-7 required_fixes (prioritize most important)
 
 **APPROVAL THRESHOLD**: Only approve (approved=true) if quality_score >= 7.
@@ -2177,6 +2179,16 @@ Return a JSON object:
   "required_fixes": ["learning issue 1", "learning issue 2"],
   "optional_suggestions": ["learning improvement 1", "learning improvement 2"]
 }}
+
+**CRITICAL INSTRUCTIONS FOR REVIEWER:**
+- Put ALL feedback in "required_fixes" as SPECIFIC, ACTIONABLE instructions (max 300 chars each)
+- Format: "Location: Action verb + specific change"
+- MUST start with location reference (section, paragraph, topic, activity, etc.)
+- MUST include active action verb (add, remove, fix, change, clarify, expand, improve, provide, split, etc.)
+- Example: "Discovery section: Add concrete examples to illustrate abstract concepts"
+- Example: "Engagement activity: Clarify instructions by specifying exact deliverables"
+- Example: "Quiz question 3: Fix the answer key to match the correct option"
+- Maximum 5-7 required_fixes (prioritize most important for student learning)
 
 **SCORING GUIDE:**
 - 10 = EXCELLENT: Super engaging, crystal clear, all sources working, exceptional learning experience
