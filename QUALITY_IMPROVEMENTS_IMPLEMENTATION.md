@@ -86,8 +86,8 @@ Each feedback item must have:
    - include, ensure, convert, rewrite
 
 3. **Conciseness**:
-   - Maximum 120 characters
-   - Enforces focused, surgical fixes
+   - Maximum 300 characters
+   - Enforces focused, specific fixes while allowing sufficient detail
 
 4. **Not Vague**:
    - Rejects patterns starting with: content, better, more, improve, quality, enhance, overall

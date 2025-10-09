@@ -156,7 +156,7 @@ class WorkflowNodes(RobustWorkflowMixin):
         Checks:
         - Must have location reference (section, paragraph, line, topic, subsection, introduction, etc.)
         - Must have action verb (add, remove, fix, change, reduce, replace, improve, clarify, etc.)
-        - Should be concise (max 120 chars)
+        - Should be concise (max 300 chars)
         - Should not be vague
 
         Returns:
@@ -185,13 +185,15 @@ class WorkflowNodes(RobustWorkflowMixin):
             r'\bupdate\b', r'\bexpand\b', r'\bshorten\b', r'\bdelete\b',
             r'\binsert\b', r'\bmodify\b', r'\bcorrect\b', r'\brevise\b',
             r'\binclude\b', r'\bensure\b', r'\bconvert\b', r'\brewrite\b',
+            r'\bprovide\b', r'\bsplit\b', r'\bmerge\b', r'\bmove\b',
+            r'\brearrange\b', r'\bspecify\b', r'\bdefine\b', r'\bexplain\b',
         ]
         if not any(re.search(verb, fix.lower()) for verb in action_verbs):
             issues.append("Missing action verb")
 
-        # Check length (should be concise)
-        if len(fix) > 120:
-            issues.append(f"Too long ({len(fix)} chars, max 120)")
+        # Check length (should be reasonably concise)
+        if len(fix) > 300:
+            issues.append(f"Too long ({len(fix)} chars, max 300)")
 
         # Check for vague patterns
         vague_patterns = [

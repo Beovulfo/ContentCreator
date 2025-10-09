@@ -51,9 +51,9 @@ def test_feedback_validation():
         if not any(re.search(verb, fix.lower()) for verb in action_verbs):
             issues.append("Missing action verb")
 
-        # Check length (should be concise)
-        if len(fix) > 120:
-            issues.append(f"Too long ({len(fix)} chars, max 120)")
+        # Check length (should be reasonably concise)
+        if len(fix) > 300:
+            issues.append(f"Too long ({len(fix)} chars, max 300)")
 
         # Check for vague patterns
         vague_patterns = [
@@ -79,7 +79,7 @@ def test_feedback_validation():
         ("Better quality needed", False, "Invalid: vague start pattern"),
         ("Make it more engaging", False, "Invalid: no location reference"),
         ("Fix the narrative", False, "Invalid: no location, vague action"),
-        ("This is a very long feedback item that exceeds the 120 character limit and should be rejected because it's too verbose and not concise", False, "Invalid: too long (>120 chars)"),
+        ("This is a very long feedback item that exceeds the 300 character limit and should be rejected because it's too verbose and not concise enough for practical use. We need to keep feedback focused and actionable, not rambling on with excessive detail that makes it hard to parse and implement. This sentence alone demonstrates what happens when we don't enforce limits.", False, "Invalid: too long (>300 chars)"),
         ("Add more examples and improve the flow and make it better overall", False, "Invalid: no specific location"),
     ]
 
