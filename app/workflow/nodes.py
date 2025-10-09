@@ -27,29 +27,30 @@ class WorkflowNodes(RobustWorkflowMixin):
     def __init__(self):
         # Initialize LLM clients for Writer/Editor/Reviewer agents only
         if self._is_azure_configured():
-            # ContentExpert and EDITOR use gpt-4.1-mini (per user request)
-            content_deployment = "gpt-4.1-mini"
-            content_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "https://agentmso.openai.azure.com")
-            content_key = os.getenv("AZURE_OPENAI_API_KEY")
-            content_api_version = "2025-01-01-preview"
+            # WRITER uses gpt-4.1 (more capable model for content creation)
+            writer_deployment = "gpt-4.1"
+            writer_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "https://agentmso.openai.azure.com")
+            writer_key = os.getenv("AZURE_OPENAI_API_KEY")
+            writer_api_version = "2025-01-01-preview"
 
             self.content_expert_llm = AzureChatOpenAI(
-                azure_endpoint=content_endpoint,
-                azure_deployment=content_deployment,
-                api_key=content_key,
-                api_version=content_api_version,
-                temperature=1.0,  # gpt-4.1-mini only supports temperature=1.0
-                model_kwargs={"max_completion_tokens": 8000}  # Pass in model_kwargs
+                azure_endpoint=writer_endpoint,
+                azure_deployment=writer_deployment,
+                api_key=writer_key,
+                api_version=writer_api_version,
+                temperature=0.7,  # gpt-4.1 supports variable temperature
+                model_kwargs={"max_completion_tokens": 32000}  # Pass in model_kwargs
             )
 
             # EDITOR uses gpt-4.1-mini
+            editor_deployment = "gpt-4.1-mini"
             self.education_expert_llm = AzureChatOpenAI(
-                azure_endpoint=content_endpoint,
-                azure_deployment=content_deployment,
-                api_key=content_key,
-                api_version=content_api_version,
+                azure_endpoint=writer_endpoint,
+                azure_deployment=editor_deployment,
+                api_key=writer_key,
+                api_version=writer_api_version,
                 temperature=1.0,  # gpt-4.1-mini only supports temperature=1.0
-                model_kwargs={"max_completion_tokens": 8000}  # Increased from 2000 to prevent JSON truncation
+                model_kwargs={"max_completion_tokens": 32000}  # Increased from 2000 to prevent JSON truncation
             )
 
             # REVIEWER uses gpt-4.1-mini (same as WRITER/EDITOR for consistency and reliable JSON parsing)
@@ -64,11 +65,11 @@ class WorkflowNodes(RobustWorkflowMixin):
                 api_key=reviewer_key,
                 api_version=reviewer_api_version,
                 temperature=1.0,  # gpt-4.1-mini only supports temperature=1.0
-                model_kwargs={"max_completion_tokens": 8000}  # Increased from 2000 to prevent JSON truncation
+                model_kwargs={"max_completion_tokens": 32000}  # Increased from 2000 to prevent JSON truncation
             )
             # Initialize context managers with Azure model names
-            self.content_expert_context = ContextManager(content_deployment)
-            self.education_expert_context = ContextManager(content_deployment)
+            self.content_expert_context = ContextManager(writer_deployment)
+            self.education_expert_context = ContextManager(editor_deployment)
             self.alpha_student_context = ContextManager(reviewer_deployment)
         else:
             # Fallback to regular OpenAI - using gpt-4o-mini for WRITER and EDITOR
@@ -76,17 +77,17 @@ class WorkflowNodes(RobustWorkflowMixin):
             self.content_expert_llm = ChatOpenAI(
                 model=content_model,
                 temperature=0.7,  # Lowered to 0.7 to prevent gibberish
-                model_kwargs={"max_completion_tokens": 8000}
+                model_kwargs={"max_completion_tokens": 32000}
             )
             self.education_expert_llm = ChatOpenAI(
                 model="gpt-4o-mini",
                 temperature=0.7,  # Focused temperature for consistent review
-                model_kwargs={"max_completion_tokens": 8000}
+                model_kwargs={"max_completion_tokens": 32000}
             )
             self.alpha_student_llm = ChatOpenAI(
                 model="gpt-4o-mini",
                 temperature=0.6,  # Lower temperature for consistent scoring
-                model_kwargs={"max_completion_tokens": 8000}
+                model_kwargs={"max_completion_tokens": 32000}
             )
             # Initialize context managers with OpenAI model names
             self.content_expert_context = ContextManager(content_model)
@@ -103,17 +104,18 @@ class WorkflowNodes(RobustWorkflowMixin):
         print("="*60)
 
         if self._is_azure_configured():
-            # Azure configuration - ALL agents use gpt-4.1-mini for consistency
-            content_deployment = "gpt-4.1-mini"
+            # Azure configuration - WRITER uses gpt-4.1, EDITOR/REVIEWER use gpt-4.1-mini
+            writer_deployment = "gpt-4.1"
+            editor_deployment = "gpt-4.1-mini"
             reviewer_deployment = "gpt-4.1-mini"
 
             print("📝 ContentExpert (WRITER):")
-            print(f"   Model: {content_deployment} (Azure)")
-            print(f"   Temperature: 1.0 (gpt-4.1-mini required default)")
-            print(f"   Purpose: Creative, engaging content generation")
+            print(f"   Model: {writer_deployment} (Azure)")
+            print(f"   Temperature: 0.7 (configurable for gpt-4.1)")
+            print(f"   Purpose: Creative, engaging content generation with advanced reasoning")
 
             print("\n📚 EducationExpert (EDITOR):")
-            print(f"   Model: {content_deployment} (Azure)")
+            print(f"   Model: {editor_deployment} (Azure)")
             print(f"   Temperature: 1.0 (gpt-4.1-mini required default)")
             print(f"   Purpose: Pedagogical review and compliance")
 
@@ -146,6 +148,126 @@ class WorkflowNodes(RobustWorkflowMixin):
         """Check if Azure OpenAI configuration is available"""
         required_vars = ["AZURE_ENDPOINT", "AZURE_SUBSCRIPTION_KEY", "AZURE_API_VERSION"]
         return all(os.getenv(var) for var in required_vars)
+
+    def _extract_json_from_response(self, content: str) -> dict:
+        """
+        Extract valid JSON from response content, handling truncation and extra text.
+
+        Tries multiple strategies:
+        1. Parse as-is
+        2. Clean invalid Unicode escapes and retry
+        3. Extract JSON from markdown code blocks
+        4. Find first '{' and last '}'
+        5. Handle truncated JSON by completing it
+        """
+        import re
+
+        # Helper function to clean invalid Unicode escapes
+        def clean_invalid_unicode_escapes(text: str) -> str:
+            r"""Fix invalid \uXXXX escape sequences in JSON strings"""
+            # Replace invalid \u escapes that aren't followed by 4 hex digits
+            # This regex finds \u not followed by exactly 4 hex characters
+            def replace_invalid_escape(match):
+                escaped = match.group(0)
+                # If it's not a valid \uXXXX, escape the backslash
+                if len(escaped) < 6 or not all(c in '0123456789abcdefABCDEF' for c in escaped[2:6]):
+                    return escaped.replace('\\', '\\\\')
+                return escaped
+
+            # Fix incomplete \u escapes at the end of strings
+            text = re.sub(r'\\u[0-9a-fA-F]{0,3}(?=["\s\]\},]|$)', lambda m: m.group(0).replace('\\', '\\\\'), text)
+
+            # Fix other common issues
+            # Fix bare backslashes that aren't part of valid escape sequences
+            text = re.sub(r'\\(?!["\\/bfnrtu])', r'\\\\', text)
+
+            return text
+
+        # Strategy 1: Try parsing as-is
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            # Strategy 2: If it's a Unicode escape error, try to fix it
+            if "Invalid \\uXXXX escape" in str(e) or "Invalid \\escape" in str(e):
+                try:
+                    cleaned_content = clean_invalid_unicode_escapes(content)
+                    return json.loads(cleaned_content)
+                except json.JSONDecodeError:
+                    pass
+
+        # Strategy 3: Extract from markdown code blocks
+        json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', content, re.DOTALL)
+        if json_match:
+            try:
+                return json.loads(json_match.group(1))
+            except json.JSONDecodeError:
+                try:
+                    cleaned = clean_invalid_unicode_escapes(json_match.group(1))
+                    return json.loads(cleaned)
+                except json.JSONDecodeError:
+                    pass
+
+        # Strategy 4: Find first '{' and last '}'
+        first_brace = content.find('{')
+        last_brace = content.rfind('}')
+
+        if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+            json_str = content[first_brace:last_brace + 1]
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError as e:
+                # Try cleaning Unicode escapes first
+                try:
+                    cleaned = clean_invalid_unicode_escapes(json_str)
+                    return json.loads(cleaned)
+                except json.JSONDecodeError:
+                    pass
+
+                # Strategy 5: Handle truncation by completing the JSON
+                # Common issue: truncated in the middle of a string in an array
+                if "optional_suggestions" in json_str or "required_fixes" in json_str:
+                    # Try to complete the truncated JSON
+                    # Find where it was cut off and close arrays/objects
+                    try:
+                        # Count open brackets/braces
+                        open_braces = json_str.count('{') - json_str.count('}')
+                        open_brackets = json_str.count('[') - json_str.count(']')
+                        open_quotes = json_str.count('"') % 2  # Odd means unclosed quote
+
+                        # Try to fix it
+                        fixed_json = json_str
+
+                        # If there's an unclosed quote, close it
+                        if open_quotes == 1:
+                            fixed_json += '"'
+
+                        # If we're in the middle of a string array, close the array
+                        # Find the last occurrence of '"' before the end
+                        if '"' in fixed_json[-50:]:  # Look at last 50 chars
+                            # We might be in a truncated string - remove incomplete string
+                            last_complete_quote = fixed_json.rfind('",')
+                            if last_complete_quote == -1:
+                                last_complete_quote = fixed_json.rfind('"')
+
+                            if last_complete_quote > 0:
+                                # Truncate to last complete item
+                                fixed_json = fixed_json[:last_complete_quote + 1]
+
+                        # Close remaining open brackets and braces
+                        for _ in range(open_brackets):
+                            fixed_json += ']'
+                        for _ in range(open_braces):
+                            fixed_json += '}'
+
+                        return json.loads(fixed_json)
+                    except:
+                        pass
+
+                # If all else fails, raise the original error
+                raise e
+
+        # If we get here, we couldn't extract valid JSON
+        raise json.JSONDecodeError(f"Could not extract valid JSON from response", content, 0)
 
     def _create_azure_llm(self, deployment: str, temperature: float, max_completion_tokens: int):
         """Create Azure OpenAI LLM instance (gpt-5-mini only supports default parameters)"""
@@ -477,7 +599,10 @@ class WorkflowNodes(RobustWorkflowMixin):
     # =============================================================================
 
     def _extract_section_template(self, full_template: str, section_ordinal: int) -> str:
-        """Extract section-specific template content from full template"""
+        """
+        DEPRECATED: This method is no longer used. Template requirements now come from template_mapping.yaml.
+        Kept for backward compatibility only.
+        """
         # Map section ordinals to template section identifiers
         section_map = {
             1: "## Section 1: Overview",
@@ -507,27 +632,9 @@ class WorkflowNodes(RobustWorkflowMixin):
         section_content = full_template[start_idx:next_section_idx].strip()
         return section_content
 
-    def _load_template_and_guidelines(self) -> Dict[str, str]:
-        """Load template and guidelines for WRITER access"""
-        template_content = ""
+    def _load_guidelines_only(self) -> str:
+        """Load ONLY guidelines for WRITER access (template.md no longer needed - using template_mapping.yaml instead)"""
         guidelines_content = ""
-
-        try:
-            # Try template.md first (preferred), then fall back to template.docx
-            template_md_path = os.path.join(os.getcwd(), "input", "template.md")
-            template_docx_path = os.path.join(os.getcwd(), "input", "template.docx")
-
-            if os.path.exists(template_md_path):
-                with open(template_md_path, 'r', encoding='utf-8') as f:
-                    template_content = f.read()
-                print(f"   📄 Loaded template.md ({len(template_content)} chars)")
-            elif os.path.exists(template_docx_path):
-                from docx import Document
-                doc = Document(template_docx_path)
-                template_content = "\n".join([para.text for para in doc.paragraphs if para.text.strip()])
-                print(f"   📄 Loaded template.docx ({len(template_content)} chars)")
-        except Exception as e:
-            print(f"⚠️  Could not load template: {e}")
 
         try:
             guidelines_path = os.path.join(os.getcwd(), "input", "guidelines.md")
@@ -538,10 +645,16 @@ class WorkflowNodes(RobustWorkflowMixin):
         except Exception as e:
             print(f"⚠️  Could not load guidelines.md: {e}")
 
-        return {
-            "template": template_content if template_content else "Template not available",
-            "guidelines": guidelines_content[:5000] if guidelines_content else "Guidelines not available"  # Keep guidelines limited
-        }
+        # Intelligently summarize if content is too large (>16000 tokens)
+        if guidelines_content:
+            context_mgr = ContextManager()
+            guidelines_tokens = context_mgr.count_tokens(guidelines_content)
+            if guidelines_tokens > 16000:
+                print(f"   📊 Guidelines exceed 16k tokens ({guidelines_tokens}), summarizing...")
+                guidelines_content = context_mgr.summarize_guidelines(guidelines_content, max_tokens=16000)
+                print(f"   ✅ Guidelines summarized to {context_mgr.count_tokens(guidelines_content)} tokens")
+
+        return guidelines_content if guidelines_content else "Guidelines not available"
 
     def initialize_workflow(self, state: RunState) -> RunState:
         """Initialize the autonomous workflow - no interactive validation"""
@@ -557,12 +670,13 @@ class WorkflowNodes(RobustWorkflowMixin):
         state.approved_sections = []
         state.context_summary = ""
 
-        # OPTIMIZATION: Cache template and guidelines to avoid re-loading on every iteration
-        print(f"📚 Caching template and guidelines...")
-        if not hasattr(state, 'cached_template_guidelines'):
-            state.cached_template_guidelines = self._load_template_and_guidelines()
-            print(f"   ✅ Cached {len(state.cached_template_guidelines.get('template', ''))} chars of template")
-            print(f"   ✅ Cached {len(state.cached_template_guidelines.get('guidelines', ''))} chars of guidelines")
+        # OPTIMIZATION: Cache guidelines to avoid re-loading on every iteration
+        # NOTE: template.md is no longer used - WRITER and EDITOR use template_mapping.yaml instead
+        print(f"📚 Caching guidelines...")
+        if not hasattr(state, 'cached_guidelines'):
+            state.cached_guidelines = self._load_guidelines_only()
+            print(f"   ✅ Cached {len(state.cached_guidelines)} chars of guidelines")
+            print(f"   ℹ️  Template requirements come from template_mapping.yaml (not template.md)")
 
         file_io.log_run_state(state.week_number, {
             "node": "initialize_workflow",
@@ -685,10 +799,22 @@ class WorkflowNodes(RobustWorkflowMixin):
             # Education Expert review (with access to all sections)
             state = self.education_expert_review(state)
 
-            # Apply EDITOR's direct edits immediately (HYBRID MODEL)
-            state = self.apply_direct_edits(state)
+            # DISABLED: Apply EDITOR's direct edits immediately (causing quality degradation)
+            # Instead, EDITOR provides explicit feedback and WRITER makes all changes
+            # state = self.apply_direct_edits(state)
 
-            # Update the section_draft with changes from direct edits
+            # Convert direct_edits to required_fixes so WRITER handles them
+            if state.education_review and state.education_review.direct_edits:
+                for edit in state.education_review.direct_edits:
+                    fix_text = f"[{edit.edit_type}] {edit.reason}"
+                    if edit.location:
+                        fix_text += f" (Location: {edit.location})"
+                    if edit.target:
+                        fix_text += f" (Target: {edit.target})"
+                    state.education_review.required_fixes.append(fix_text)
+                print(f"   📝 Converted {len(state.education_review.direct_edits)} EDITOR edits to WRITER instructions")
+
+            # Update the section_draft (no direct edits applied)
             if state.current_draft:
                 state.approved_sections[i] = state.current_draft
 
@@ -822,8 +948,8 @@ class WorkflowNodes(RobustWorkflowMixin):
 
         # OPTIMIZATION: Use cached guidelines from state (loaded once at initialization)
         # Only load if somehow not cached (shouldn't happen after initialization)
-        if hasattr(state, 'cached_template_guidelines') and state.cached_template_guidelines:
-            guidelines_content = state.cached_template_guidelines.get('guidelines', '')
+        if hasattr(state, 'cached_guidelines') and state.cached_guidelines:
+            guidelines_content = state.cached_guidelines
             if state.revision_count == 0:  # Only log on first iteration to reduce noise
                 print(f"   ♻️  Using cached guidelines ({len(guidelines_content)} chars)")
         else:
@@ -837,14 +963,20 @@ class WorkflowNodes(RobustWorkflowMixin):
         # Extract week-specific information
         week_info = self._extract_week_info(syllabus_content, state.week_number)
 
-        # OPTIMIZATION: Only search web on FIRST iteration to identify sources
+        # ON-DEMAND WEB SEARCH: WRITER decides if it needs current information
+        # Check if section requires current/fresh data based on title and description
+        needs_current_info = any(keyword in current_section.title.lower() or keyword in current_section.description.lower()
+                                for keyword in ['latest', 'current', 'recent', 'new', 'trend', '2024', '2025', 'dataset', 'example'])
+
+        # OPTIMIZATION: Only search web when needed and on FIRST iteration
         # Subsequent revisions reuse the same verified sources
-        if state.revision_count == 0:
+        web_resources_context = ""
+        if state.revision_count == 0 and needs_current_info:
             # CRITICAL: Get fresh web content with working links and datasets
             web_tool = get_web_tool()
 
             # Perform multiple targeted searches for the WRITER
-            print(f"   🌐 Searching web for current resources (first iteration only)...")
+            print(f"   🌐 Section requires current info - searching web for resources...")
 
             # Search 1: General section content
             general_search = self.safe_web_search(
@@ -852,23 +984,19 @@ class WorkflowNodes(RobustWorkflowMixin):
                 f"{current_section.title} data science {state.week_number} tutorial 2024 2025"
             )
 
-            # Search 2: Datasets specifically
-            dataset_search = self.safe_web_search(
-                lambda q: web_tool.search(q, top_k=5),
-                f"kaggle datasets {current_section.title} data science 2024"
-            )
-
-            # Search 3: Educational resources and examples
-            resources_search = self.safe_web_search(
-                lambda q: web_tool.search(q, top_k=5),
-                f"{current_section.title} data science examples resources 2024"
-            )
+            # Search 2: Datasets specifically (if discovery or engagement section)
+            dataset_search = []
+            if any(s in current_section.id.lower() for s in ['discovery', 'engagement']):
+                dataset_search = self.safe_web_search(
+                    lambda q: web_tool.search(q, top_k=5),
+                    f"kaggle datasets {current_section.title} data science 2024"
+                )
 
             # Combine and deduplicate search results
             all_search_results = []
             seen_urls = set()
 
-            for result_list in [general_search, dataset_search, resources_search]:
+            for result_list in [general_search, dataset_search]:
                 if result_list:
                     for result in result_list:
                         if result.url not in seen_urls:
@@ -890,10 +1018,13 @@ class WorkflowNodes(RobustWorkflowMixin):
 
             # Format search results for WRITER
             web_resources_context = self._format_web_resources_for_writer(all_search_results)
-        else:
+        elif state.revision_count > 0 and state.web_results:
             # REUSE: Use cached web results from first iteration
-            print(f"   ♻️  Reusing {len(state.web_results) if state.web_results else 0} verified web resources from first iteration")
+            print(f"   ♻️  Reusing {len(state.web_results)} verified web resources from first iteration")
             web_resources_context = self._format_web_resources_for_writer(state.web_results or [])
+        else:
+            # No web search needed - WRITER has sufficient information from syllabus and guidelines
+            print(f"   ℹ️  Section does not require web search - using syllabus and guidelines only")
 
         # Format week context for the prompt
         week_context = self._format_week_context_for_prompt(week_info, state.week_number)
@@ -979,13 +1110,44 @@ class WorkflowNodes(RobustWorkflowMixin):
             revision_feedback += f"6. Make SURGICAL fixes, not wholesale rewrites\n\n"
 
             # CRITICAL OPTIMIZATION: Show previous draft for context-aware revisions
+            # If scores are WORSENING, show the BEST previous draft to learn from
+            best_draft = None
+            if hasattr(state, 'draft_history') and state.draft_history and len(state.draft_history) > 1:
+                # Find the best draft by combined score
+                best_draft = max(state.draft_history[:-1],
+                               key=lambda d: (d.get('editor_score', 0) or 0) + (d.get('reviewer_score', 0) or 0))
+
+                current_combined = (state.education_review.quality_score or 0) + (state.alpha_review.quality_score or 0)
+                best_combined = (best_draft.get('editor_score', 0) or 0) + (best_draft.get('reviewer_score', 0) or 0)
+
+                if current_combined < best_combined:
+                    # Scores are WORSENING - show the best draft for learning
+                    revision_feedback += f"**⚠️  SCORES ARE WORSENING - LEARN FROM BEST PREVIOUS DRAFT:**\n"
+                    revision_feedback += f"Best was Revision {best_draft['revision']}: Editor {best_draft['editor_score']}/10, Reviewer {best_draft['reviewer_score']}/10\n"
+                    revision_feedback += f"Current is Revision {state.revision_count}: Editor {state.education_review.quality_score}/10, Reviewer {state.alpha_review.quality_score}/10\n\n"
+
+                    best_draft_preview = best_draft['content_md'][:2000]
+                    if len(best_draft['content_md']) > 2000:
+                        best_draft_preview += "\n... [content continues]"
+
+                    revision_feedback += f"**📄 BEST PREVIOUS DRAFT (Revision {best_draft['revision']}):**\n"
+                    revision_feedback += f"```markdown\n{best_draft_preview}\n```\n"
+                    revision_feedback += f"**Word count: {best_draft['word_count']} words**\n\n"
+                    revision_feedback += f"**🎯 WHAT MADE THIS DRAFT BETTER:**\n"
+                    if best_draft.get('editor_breakdown'):
+                        for aspect, score in best_draft['editor_breakdown'].items():
+                            if score >= 8:
+                                revision_feedback += f"   ✅ {aspect.replace('_', ' ').title()}: {score}/10 (excellent)\n"
+                    revision_feedback += f"\n⚠️  **LEARN FROM THIS DRAFT - Return to this quality level!**\n\n"
+
+            # Always show immediate previous draft for comparison
             if state.current_draft and state.current_draft.content_md:
                 # Show first 1500 chars to provide context without overwhelming the prompt
                 prev_draft_preview = state.current_draft.content_md[:1500]
                 if len(state.current_draft.content_md) > 1500:
                     prev_draft_preview += "\n... [content continues]"
 
-                revision_feedback += f"**📄 YOUR PREVIOUS DRAFT (for comparison):**\n"
+                revision_feedback += f"**📄 YOUR IMMEDIATE PREVIOUS DRAFT (for comparison):**\n"
                 revision_feedback += f"```markdown\n{prev_draft_preview}\n```\n"
                 revision_feedback += f"**Word count: {state.current_draft.word_count} words**\n\n"
                 revision_feedback += f"⚠️  **COMPARE YOUR REVISION TO THE ABOVE:**\n"
@@ -996,20 +1158,32 @@ class WorkflowNodes(RobustWorkflowMixin):
             revision_feedback += f"{'='*70}\n\n"
 
         if state.education_review and not state.education_review.approved:
-            revision_feedback += f"**EDITOR FEEDBACK TO ADDRESS:**\n"
-            if state.education_review.quality_score:
-                revision_feedback += f"• Current Editor Score: {state.education_review.quality_score}/10 (NEED >=7)\n"
-                if state.education_review.score_breakdown:
-                    revision_feedback += f"  Score Breakdown: {json.dumps(state.education_review.score_breakdown, indent=2)}\n"
-                    # Identify what to preserve vs fix
-                    good_aspects = [k for k, v in state.education_review.score_breakdown.items() if v >= 7]
-                    needs_work = [k for k, v in state.education_review.score_breakdown.items() if v < 7]
-                    if good_aspects:
-                        revision_feedback += f"  ✅ PRESERVE THESE (scored >=7): {', '.join(good_aspects)}\n"
-                    if needs_work:
-                        revision_feedback += f"  🔧 FIX ONLY THESE (scored <7): {', '.join(needs_work)}\n"
-            for fix in state.education_review.required_fixes:
-                revision_feedback += f"• {fix}\n"
+            revision_feedback += f"\n{'='*70}\n"
+            revision_feedback += f"📋 EDITOR TODO LIST - CHECK OFF EACH ITEM AS YOU FIX IT\n"
+            revision_feedback += f"{'='*70}\n\n"
+            revision_feedback += f"**Current Editor Score: {state.education_review.quality_score}/10 (TARGET: >=7)**\n\n"
+
+            if state.education_review.score_breakdown:
+                # Identify what to preserve vs fix
+                good_aspects = [k for k, v in state.education_review.score_breakdown.items() if v >= 7]
+                needs_work = [k for k, v in state.education_review.score_breakdown.items() if v < 7]
+                if good_aspects:
+                    revision_feedback += f"✅ **WORKING WELL (DON'T CHANGE):** {', '.join([a.replace('_', ' ').title() for a in good_aspects])}\n"
+                if needs_work:
+                    revision_feedback += f"🔧 **NEEDS FIXING:** {', '.join([a.replace('_', ' ').title() for a in needs_work])}\n\n"
+
+            if state.education_review.required_fixes:
+                revision_feedback += f"**📝 EDITOR'S TODO LIST ({len(state.education_review.required_fixes)} items):**\n"
+                revision_feedback += f"**CRITICAL RULES:**\n"
+                revision_feedback += f"- Fix ONLY what's listed below - NO other changes\n"
+                revision_feedback += f"- Keep everything else EXACTLY as is\n"
+                revision_feedback += f"- Address each item systematically\n"
+                revision_feedback += f"- Make MINIMAL changes to fix each issue\n\n"
+
+                for i, fix in enumerate(state.education_review.required_fixes, 1):
+                    revision_feedback += f"[ ] {i}. {fix}\n"
+
+                revision_feedback += f"\n⚠️  **FIX ALL {len(state.education_review.required_fixes)} ITEMS ABOVE - NOTHING ELSE!**\n"
 
         if state.alpha_review and not state.alpha_review.approved:
             # Calculate dynamic threshold for REVIEWER (section-specific)
@@ -1017,59 +1191,59 @@ class WorkflowNodes(RobustWorkflowMixin):
             reviewer_threshold = 5 if is_structure_section else 7
 
             revision_feedback += f"\n{'='*70}\n"
-            revision_feedback += f"🎓 CRITICAL: ALPHASTUDENT (REVIEWER) FEEDBACK - MUST ADDRESS\n"
+            revision_feedback += f"🎓 REVIEWER TODO LIST - CHECK OFF EACH ITEM AS YOU FIX IT\n"
             revision_feedback += f"{'='*70}\n\n"
-            revision_feedback += f"**The REVIEWER represents real students using your content.**\n"
-            revision_feedback += f"**Low scores indicate students will struggle with this content!**\n\n"
+            revision_feedback += f"**Current Reviewer Score: {state.alpha_review.quality_score}/10 (TARGET: >={reviewer_threshold})**\n"
+            revision_feedback += f"**The REVIEWER represents real students - low scores mean students struggle!**\n\n"
 
-            if state.alpha_review.quality_score:
-                revision_feedback += f"**Current Reviewer Score: {state.alpha_review.quality_score}/10 (NEED >={reviewer_threshold})**\n\n"
+            if state.alpha_review.score_breakdown:
+                # Identify what to preserve vs fix
+                good_aspects = [k for k, v in state.alpha_review.score_breakdown.items() if v >= 7]
+                needs_work = [k for k, v in state.alpha_review.score_breakdown.items() if v < 7]
 
-                # Show what aspects scored low with EXPLANATIONS
-                if state.alpha_review.score_breakdown:
-                    revision_feedback += f"**📊 DETAILED SCORE BREAKDOWN (Student Perspective):**\n"
-                    for aspect, score in state.alpha_review.score_breakdown.items():
-                        aspect_name = aspect.replace('_', ' ').title()
-                        if score < 7:
-                            revision_feedback += f"   ❌ {aspect_name}: {score}/10 - BELOW ACCEPTABLE\n"
-                        elif score < reviewer_threshold:
-                            revision_feedback += f"   ⚠️  {aspect_name}: {score}/10 - NEEDS IMPROVEMENT\n"
-                        else:
-                            revision_feedback += f"   ✅ {aspect_name}: {score}/10 - Good (preserve this)\n"
-                    revision_feedback += f"\n"
-
-                    # Identify what to preserve vs fix
-                    good_aspects = [k for k, v in state.alpha_review.score_breakdown.items() if v >= 7]
-                    needs_work = [k for k, v in state.alpha_review.score_breakdown.items() if v < 7]
-                    if needs_work:
-                        revision_feedback += f"**🔧 PRIORITY FIXES (these aspects are failing students):**\n"
-                        for aspect in needs_work:
-                            score = state.alpha_review.score_breakdown[aspect]
-                            revision_feedback += f"   • {aspect.replace('_', ' ').title()}: Currently {score}/10 - students will struggle here\n"
-                        revision_feedback += f"\n"
-                    if good_aspects:
-                        revision_feedback += f"**✅ WORKING WELL (preserve these):**\n"
-                        revision_feedback += f"   • {', '.join([a.replace('_', ' ').title() for a in good_aspects])}\n\n"
+                if good_aspects:
+                    revision_feedback += f"✅ **WORKING WELL (DON'T CHANGE):** {', '.join([a.replace('_', ' ').title() for a in good_aspects])}\n"
+                if needs_work:
+                    revision_feedback += f"🔧 **NEEDS FIXING:** {', '.join([a.replace('_', ' ').title() + f' ({state.alpha_review.score_breakdown[a]}/10)' for a in needs_work])}\n\n"
 
             # Show specific fixes with emphasis
             if state.alpha_review.required_fixes:
-                revision_feedback += f"**🚨 SPECIFIC ISSUES RAISED BY REVIEWER (students' perspective):**\n"
+                revision_feedback += f"**📝 REVIEWER'S TODO LIST ({len(state.alpha_review.required_fixes)} items):**\n"
+                revision_feedback += f"**CRITICAL RULES:**\n"
+                revision_feedback += f"- Fix ONLY what's listed below - NO other changes\n"
+                revision_feedback += f"- Keep everything else EXACTLY as is\n"
+                revision_feedback += f"- Address each item systematically\n"
+                revision_feedback += f"- Make MINIMAL changes to fix each issue\n\n"
+
                 for i, fix in enumerate(state.alpha_review.required_fixes, 1):
-                    revision_feedback += f"{i}. {fix}\n"
-                revision_feedback += f"\n⚠️  **CRITICAL: Address ALL {len(state.alpha_review.required_fixes)} issues above!**\n\n"
+                    revision_feedback += f"[ ] {i}. {fix}\n"
+
+                revision_feedback += f"\n⚠️  **FIX ALL {len(state.alpha_review.required_fixes)} ITEMS ABOVE - NOTHING ELSE!**\n\n"
 
             # CRITICAL: Add explicit broken link/dataset feedback with specific URLs
             if hasattr(state, 'broken_links_details') and state.broken_links_details:
-                revision_feedback += f"\n**❌ CRITICAL: BROKEN LINKS THAT MUST BE FIXED OR REMOVED:**\n"
-                for link_detail in state.broken_links_details:
-                    revision_feedback += f"• {link_detail['url']} - Failed {3 - link_detail.get('passed_rounds', 0)}/3 verification rounds\n"
-                    revision_feedback += f"  ACTION REQUIRED: Either fix this URL or replace with a working alternative\n"
+                revision_feedback += f"\n{'='*70}\n"
+                revision_feedback += f"❌ CRITICAL: BROKEN LINKS TODO LIST\n"
+                revision_feedback += f"{'='*70}\n\n"
+                revision_feedback += f"**ACTION: Fix or remove each broken link**\n\n"
+
+                for i, link_detail in enumerate(state.broken_links_details, 1):
+                    revision_feedback += f"[ ] {i}. {link_detail['url']}\n"
+                    revision_feedback += f"     Failed verification - Either fix URL or replace with working alternative\n"
+
+                revision_feedback += f"\n⚠️  **ALL {len(state.broken_links_details)} BROKEN LINKS MUST BE FIXED!**\n\n"
 
             if hasattr(state, 'failed_datasets_details') and state.failed_datasets_details:
-                revision_feedback += f"\n**❌ CRITICAL: FAILED DATASETS THAT MUST BE FIXED OR REPLACED:**\n"
-                for ds_detail in state.failed_datasets_details:
-                    revision_feedback += f"• {ds_detail['url']} ({ds_detail['source']}) - Dataset not accessible\n"
-                    revision_feedback += f"  ACTION REQUIRED: Replace with a working Kaggle dataset or verify the URL is correct\n"
+                revision_feedback += f"\n{'='*70}\n"
+                revision_feedback += f"❌ CRITICAL: FAILED DATASETS TODO LIST\n"
+                revision_feedback += f"{'='*70}\n\n"
+                revision_feedback += f"**ACTION: Replace each failed dataset with a working Kaggle dataset**\n\n"
+
+                for i, ds_detail in enumerate(state.failed_datasets_details, 1):
+                    revision_feedback += f"[ ] {i}. {ds_detail['url']} ({ds_detail['source']})\n"
+                    revision_feedback += f"     Dataset not accessible - Replace with working Kaggle alternative\n"
+
+                revision_feedback += f"\n⚠️  **ALL {len(state.failed_datasets_details)} DATASETS MUST BE REPLACED!**\n\n"
 
         # Add accumulated feedback memory to help avoid repeating mistakes
         if state.feedback_memory:
@@ -1177,26 +1351,29 @@ class WorkflowNodes(RobustWorkflowMixin):
                 if key not in ["structure", "subsections"]:
                     section_constraints += f"• {key}: {value}\n"
 
-        # Load template and guidelines for WRITER (CRITICAL FOR QUALITY)
-        # OPTIMIZATION: Use cached version if available
-        if hasattr(state, 'cached_template_guidelines') and state.cached_template_guidelines:
-            template_and_guidelines = state.cached_template_guidelines
-        else:
-            # Fallback to loading (shouldn't happen after initialization)
-            template_and_guidelines = self._load_template_and_guidelines()
+        # Load template_mapping.yaml for WRITER (replaces template.md for better context efficiency)
+        template_mapping_content = self.safe_file_operation(
+            lambda: file_io.read_yaml_file("config/template_mapping.yaml"),
+            "read_template_mapping_for_writer"
+        )
 
-        # CRITICAL: Extract section-specific template for this section only
-        full_template = template_and_guidelines.get('template', '')
-        section_specific_template = self._extract_section_template(full_template, current_section.ordinal)
+        # Extract section-specific requirements from template_mapping.yaml
+        section_template_info = template_mapping_content.get('sections', {}).get(current_section.id, {})
+        template_requirements = section_template_info.get('template_requirements', [])
+        implementation_details = section_template_info.get('implementation', {})
 
-        print(f"   📋 Using section-specific template ({len(section_specific_template)} chars)")
-        print(f"   📋 Loaded template_mapping.yaml and sections.json for complete configuration")
+        # Format template requirements as text
+        template_requirements_text = "\n".join([f"- {req}" for req in template_requirements]) if template_requirements else "No specific requirements"
+        implementation_text = yaml.dump(implementation_details, default_flow_style=False, sort_keys=False) if implementation_details else "No implementation details"
+
+        print(f"   📋 Using template_mapping.yaml for section requirements")
+        print(f"   📋 Loaded sections.json and guidelines.md for complete configuration")
 
         # CRITICAL: Verify bibliography links before giving to WRITER
         bibliography = week_info.get('bibliography', [])
         verified_bibliography_text, verified_bibliography = self._verify_and_format_bibliography(bibliography)
 
-        # Build a comprehensive prompt with template_mapping.yaml + sections.json + SECTION-SPECIFIC TEMPLATE + GUIDELINES + WEB RESOURCES
+        # Build a comprehensive prompt with template_mapping.yaml + sections.json + GUIDELINES + WEB RESOURCES
         content_prompt = f"""Write educational content for: {current_section.title}
 
 **Week {state.week_number} Topic:** {week_info.get('overview', 'Data Science fundamentals')}
@@ -1206,11 +1383,14 @@ class WorkflowNodes(RobustWorkflowMixin):
 
 {web_resources_context}
 
-**TEMPLATE STRUCTURE FOR THIS SECTION (MUST FOLLOW EXACTLY):**
-{section_specific_template}
+**TEMPLATE REQUIREMENTS FOR THIS SECTION (from template_mapping.yaml):**
+{template_requirements_text}
+
+**IMPLEMENTATION STRUCTURE (from template_mapping.yaml):**
+{implementation_text}
 
 **AUTHORING GUIDELINES (MUST COMPLY):**
-{template_and_guidelines['guidelines']}
+{guidelines_content}
 
 {verified_bibliography_text}
 
@@ -1234,15 +1414,47 @@ class WorkflowNodes(RobustWorkflowMixin):
 - Include proper citations where required
 - Ensure WLO alignment where specified
 
-**CRITICAL: LINK USAGE - EVERY LINK WILL BE TRIPLE-VERIFIED**
-- ✅ ONLY use links from the VERIFIED WEB RESOURCES section above (all pre-checked)
-- ✅ ONLY use links from the REQUIRED BIBLIOGRAPHY section above (all pre-checked)
+**CRITICAL: LINK USAGE - EVERY LINK WILL BE VERIFIED**
+- ✅ ALWAYS use links from the REQUIRED BIBLIOGRAPHY section above (all pre-checked) when available
+- ✅ If web resources are provided above, you may use those links (all pre-checked)
+- ℹ️  If no web resources are provided, you can write excellent content using ONLY the syllabus bibliography and your knowledge
 - ❌ DO NOT make up or guess any URLs - this will cause AUTOMATIC REJECTION
 - ❌ DO NOT modify any URLs from the verified lists
-- ❌ DO NOT assume a dataset, tutorial, or resource exists - check the lists first
-- ⚠️  If you need a resource not in the verified lists, state "Additional resource needed: [description]" instead
-- 🔴 FAILURE TO FOLLOW THIS WILL RESULT IN REJECTION - All links are triple-verified automatically
+- ❌ DO NOT assume a dataset, tutorial, or resource exists unless it's in the verified lists
+- ⚠️  External links are OPTIONAL - focus on quality educational content first
+- 🔴 FAILURE TO FOLLOW THIS WILL RESULT IN REJECTION - All links are verified automatically
 
+{'🔄 **REVISION MODE: TODO LIST APPROACH**' if is_revision else ''}
+{'''
+You are revising content based on feedback. Follow this STRICT approach:
+
+**STEP 1: REVIEW ALL TODO LISTS ABOVE**
+- Read through EDITOR's todo list (if present)
+- Read through REVIEWER's todo list (if present)
+- Read through BROKEN LINKS todo list (if present)
+- Read through FAILED DATASETS todo list (if present)
+
+**STEP 2: MAKE ONLY THE REQUESTED CHANGES**
+- Fix each [ ] item systematically, one by one
+- Make MINIMAL changes to address each specific issue
+- Keep everything else EXACTLY as it was
+- Do NOT add new content unless specifically requested
+- Do NOT remove content unless specifically requested
+- Do NOT rewrite sections that weren't mentioned in the feedback
+
+**STEP 3: PRESERVE WHAT'S WORKING**
+- Aspects that scored >=7 should remain UNCHANGED
+- Good paragraphs, examples, and explanations should be kept
+- Overall structure and flow should be preserved
+- Only modify what's explicitly listed in the todo lists
+
+**CRITICAL: MINIMIZE CHANGES OUTSIDE REQUESTS**
+- Your goal is to address the todo lists, not to rewrite everything
+- Make surgical fixes, not wholesale rewrites
+- If a paragraph wasn't mentioned in feedback, don't change it
+- Preserve your previous good work
+
+''' if is_revision else ''}
 Write complete educational content that teaches students about the week topic as a professor teaching Master's students about data science.
 
 Start writing the educational content now, beginning with the section header:"""
@@ -1252,31 +1464,31 @@ Start writing the educational content now, beginning with the section header:"""
             HumanMessage(content=content_prompt)
         ]
 
-        # Adjust temperature for revisions to reduce randomness
-        # Initial draft: 0.7 (stable), Revisions: 0.6 (very focused to prevent gibberish)
+        # Use the same model for both initial draft and revisions (gpt-4.1)
+        # Temperature is fixed at 1.0 for gpt-4.1 (required default)
         active_llm = self.content_expert_llm
         if is_revision and state.revision_count >= 1:
-            # Create a lower-temperature version for revisions
+            # Keep using gpt-4.1 for revisions (consistency)
             if self._is_azure_configured():
-                content_deployment = "gpt-4.1-mini"
-                content_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "https://agentmso.openai.azure.com")
-                content_key = os.getenv("AZURE_OPENAI_API_KEY")
-                content_api_version = "2025-01-01-preview"
+                writer_deployment = "gpt-4.1"
+                writer_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "https://agentmso.openai.azure.com")
+                writer_key = os.getenv("AZURE_OPENAI_API_KEY")
+                writer_api_version = "2025-01-01-preview"
 
                 active_llm = AzureChatOpenAI(
-                    azure_endpoint=content_endpoint,
-                    azure_deployment=content_deployment,
-                    api_key=content_key,
-                    api_version=content_api_version,
-                    temperature=1.0,  # gpt-4.1-mini only supports temperature=1.0
-                    model_kwargs={"max_completion_tokens": 4000}  # Pass in model_kwargs
+                    azure_endpoint=writer_endpoint,
+                    azure_deployment=writer_deployment,
+                    api_key=writer_key,
+                    api_version=writer_api_version,
+                    temperature=1.0,  # gpt-4.1 only supports temperature=1.0
+                    model_kwargs={"max_completion_tokens": 32000}  # Pass in model_kwargs
                 )
-                print(f"   🎯 Using revision temperature: 1.0 (gpt-4.1-mini required default)")
+                print(f"   🎯 Using revision with gpt-4.1, temperature: 1.0 (required default)")
             else:
                 active_llm = ChatOpenAI(
                     model="gpt-4o-mini",
                     temperature=0.6,
-                    model_kwargs={"max_completion_tokens": 4000}
+                    model_kwargs={"max_completion_tokens": 32000}
                 )
 
         # Make the LLM call for content generation
@@ -1345,7 +1557,11 @@ Start writing the educational content now, beginning with the section header:"""
 
             # Give WRITER ONE chance to self-correct
             print(f"   🔧 WRITER attempting self-correction...")
-            state = self._writer_self_correct(state, verification_results, current_section, week_info, section_specific_template, template_and_guidelines['guidelines'], section_constraints, active_llm)
+
+            # Format template requirements for self-correction (using template_mapping.yaml data)
+            template_requirements_for_correction = f"{template_requirements_text}\n\n{implementation_text}"
+
+            state = self._writer_self_correct(state, verification_results, current_section, week_info, template_requirements_for_correction, guidelines_content, section_constraints, active_llm)
         else:
             print(f"   ✅ WRITER self-verification passed - all links and datasets working")
 
@@ -1404,6 +1620,21 @@ Start writing the educational content now, beginning with the section header:"""
         template_requirements = section_template_info.get('template_requirements', [])
         implementation_details = section_template_info.get('implementation', {})
 
+        # Extract word count limits from template_mapping
+        word_count_requirements = []
+        if 'implementation' in section_template_info:
+            impl = section_template_info['implementation']
+            # Check for subsections with max_words
+            if 'subsections' in impl:
+                for subsec_name, subsec_details in impl['subsections'].items():
+                    if 'max_words' in subsec_details:
+                        word_count_requirements.append(f"  - {subsec_name}: MAXIMUM {subsec_details['max_words']} words")
+
+        word_count_enforcement = ""
+        if word_count_requirements:
+            word_count_enforcement = f"\n\n**STRICT WORD COUNT LIMITS (MUST ENFORCE):**\n" + "\n".join(word_count_requirements)
+            word_count_enforcement += "\n\n⚠️ CRITICAL: If any subsection exceeds its word limit, you MUST add a direct_edit with edit_type='trim_to_word_count' to enforce the limit."
+
         # Build review prompt using only the three required files
         education_review_prompt = f"""
 **SECTION TO REVIEW:**
@@ -1411,7 +1642,7 @@ Start writing the educational content now, beginning with the section header:"""
 
 **WORD COUNT ANALYSIS:**
 - Current word count: {content_word_count} words
-- Section: {current_section.id}
+- Section: {current_section.id}{word_count_enforcement}
 
 **BUILDING BLOCKS V2 REQUIREMENTS (ENFORCE ALL MULTIMEDIA/ASSESSMENT STANDARDS):**
 {yaml.dump(building_blocks_content, default_flow_style=False, sort_keys=False)}
@@ -1425,7 +1656,7 @@ Start writing the educational content now, beginning with the section header:"""
 - Description: {current_section.description}
 - Constraints: {json.dumps(current_section.constraints, indent=2)}
 
-Review this section thoroughly as the EDITOR. Your job is to enforce ALL requirements from the three configuration files.
+Review this section thoroughly as the EDITOR. Your job is to enforce ALL requirements from the three configuration files, INCLUDING WORD COUNT LIMITS.
 
 CRITICAL REVIEW FOCUS & SCORING:
 1. TEMPLATE MAPPING COMPLIANCE (0-10): Does content meet all template requirements listed above for this section?
@@ -1445,7 +1676,7 @@ CRITICAL REVIEW FOCUS & SCORING:
 - 5-6 = NEEDS IMPROVEMENT: Several compliance issues or quality concerns
 - 1-4 = POOR: Major compliance failures, significant quality issues
 
-Return a JSON object with:
+Return a JSON object with this EXACT format (keep it concise to avoid truncation):
 {{
   "approved": boolean,
   "quality_score": number (1-10),
@@ -1458,19 +1689,24 @@ Return a JSON object with:
     "citation_integration": number (0-10),
     "wlo_alignment": number (0-10)
   }},
-  "direct_edits": [
-    {{
-      "edit_type": "trim_to_word_count | fix_citation | add_missing_section | fix_header | fix_formatting",
-      "location": "section name or line number",
-      "current_value": "text to find (optional)",
-      "new_value": "replacement text (optional)",
-      "target": number (optional, for word count),
-      "reason": "why this edit is needed"
-    }}
+  "direct_edits": [],
+  "required_fixes": [
+    "Short, clear instruction 1",
+    "Short, clear instruction 2",
+    "Short, clear instruction 3"
   ],
-  "required_fixes": ["creative fixes for Writer - narrative, examples, depth"],
-  "optional_suggestions": ["nice-to-have improvements"]
+  "optional_suggestions": ["suggestion 1", "suggestion 2"]
 }}
+
+**CRITICAL INSTRUCTIONS FOR EDITOR:**
+- ALWAYS leave "direct_edits" as an empty array: []
+- Put ALL feedback in "required_fixes" as SHORT, SPECIFIC instructions (max 100 chars each)
+- Format: "Location: Action needed"
+- Example: "Section 1.2: Reduce to 250 words by removing examples"
+- Example: "Introduction: Add explicit WLO1 mapping"
+- Example: "Topic 1: Convert bullet points to narrative paragraphs"
+- Keep each fix SHORT to avoid JSON truncation - be concise!
+- Maximum 5-7 required_fixes (prioritize most important)
 
 **APPROVAL THRESHOLD**: Only approve (approved=true) if quality_score >= 7.
 Be thorough and demanding. Content must score 9 or 10 to be approved.
@@ -1491,7 +1727,7 @@ Be thorough and demanding. Content must score 9 or 10 to be approved.
         # Parse the review response
         try:
             review_content = response.content if hasattr(response, 'content') else str(response)
-            review_data = json.loads(review_content)
+            review_data = self._extract_json_from_response(review_content)
 
             # Extract quality score and breakdown
             quality_score = review_data.get("quality_score")
@@ -1549,9 +1785,9 @@ Be thorough and demanding. Content must score 9 or 10 to be approved.
                 except Exception as e:
                     print(f"⚠️  Failed to parse direct edit: {e}")
 
-            # Display direct edits if any
+            # Display direct edits if any (but they won't be applied - converted to required_fixes)
             if direct_edits:
-                print(f"\n   🔧 DIRECT EDITS ({len(direct_edits)}) - EDITOR will apply immediately:")
+                print(f"\n   📝 EDITOR provided {len(direct_edits)} direct edit suggestions (will be converted to WRITER instructions):")
                 for i, edit in enumerate(direct_edits, 1):
                     print(f"      {i}. [{edit.edit_type}] {edit.reason}")
 
@@ -1737,7 +1973,7 @@ Be thorough and demanding. Content must score 9 or 10 to be approved.
         if link_urls:
             triple_check_results = self.safe_file_operation(
                 lambda: links.triple_check(link_urls),
-                "triple_check_links_for_alpha_review"
+                "verify_links_for_alpha_review"
             )
 
         # Count results from triple check
@@ -1753,16 +1989,17 @@ Be thorough and demanding. Content must score 9 or 10 to be approved.
 
             # Log detailed results
             if broken_links > 0:
-                print(f"⚠️  {broken_links} link(s) failed triple verification:")
+                print(f"⚠️  {broken_links} link(s) failed verification:")
                 for failed in triple_check_results['summary']['failed_urls']:
-                    print(f"   ❌ {failed['url']} - passed {failed['passed_rounds']}/3 rounds")
+                    status_info = f"status {failed.get('status')}" if failed.get('status') else "error"
+                    print(f"   ❌ {failed['url']} - {status_info}")
             else:
-                print(f"✅ All {working_links} links passed triple verification")
+                print(f"✅ All {working_links} link(s) verified successfully")
         else:
             # No broken links
             state.broken_links_details = []
 
-        link_summary = f"{working_links} verified (3/3 rounds), {broken_links} failed" if triple_check_results else "no links"
+        link_summary = f"{working_links} verified, {broken_links} failed" if triple_check_results else "no links"
 
         # Prepare detailed link report for reviewer
         link_report = triple_check_results if triple_check_results else {"summary": {"all_passed": True, "failed_urls": []}}
@@ -1885,7 +2122,7 @@ Be honest about whether this content effectively teaches data science concepts. 
         # Parse the review response
         try:
             review_content = response.content if hasattr(response, 'content') else str(response)
-            review_data = json.loads(review_content)
+            review_data = self._extract_json_from_response(review_content)
 
             # Convert triple_check_results to link_check_results format
             # triple_check_results is already serialized to dicts by links.py
@@ -1995,6 +2232,30 @@ Be honest about whether this content effectively teaches data science concepts. 
                 'reviewer_score': state.alpha_review.quality_score,
                 'word_count': state.current_draft.word_count if state.current_draft else 0
             })
+
+            # CRITICAL: Save draft with scores to history and file for learning from what works
+            if not hasattr(state, 'draft_history'):
+                state.draft_history = []
+
+            current_section = state.sections[state.current_index]
+            draft_record = {
+                'section_id': current_section.id,
+                'revision': state.revision_count,
+                'content_md': state.current_draft.content_md if state.current_draft else "",
+                'word_count': state.current_draft.word_count if state.current_draft else 0,
+                'editor_score': state.education_review.quality_score,
+                'editor_breakdown': state.education_review.score_breakdown,
+                'reviewer_score': state.alpha_review.quality_score,
+                'approved': state.education_review.approved and state.alpha_review.approved,
+                'timestamp': datetime.now().isoformat()
+            }
+
+            state.draft_history.append(draft_record)
+
+            # Save draft to file: output/drafts/Week{N}/{section_id}_revision_{R}.md
+            self._save_draft_to_file(state.week_number, current_section.id, state.revision_count,
+                                    state.current_draft.content_md if state.current_draft else "",
+                                    draft_record)
 
         if tracer:
             # Log quality score if available
@@ -2159,8 +2420,20 @@ Be honest about whether this content effectively teaches data science concepts. 
         # Step 2: EDITOR reviews
         state = self.education_expert_review(state)
 
-        # Step 3: EDITOR applies direct edits
-        state = self.apply_direct_edits(state)
+        # Step 3: DISABLED - EDITOR no longer applies direct edits (causing quality degradation)
+        # Instead, all edits are converted to required_fixes for WRITER
+        # state = self.apply_direct_edits(state)
+
+        # Convert direct_edits to required_fixes so WRITER handles them
+        if state.education_review and state.education_review.direct_edits:
+            for edit in state.education_review.direct_edits:
+                fix_text = f"[{edit.edit_type}] {edit.reason}"
+                if edit.location:
+                    fix_text += f" (Location: {edit.location})"
+                if edit.target:
+                    fix_text += f" (Target: {edit.target})"
+                state.education_review.required_fixes.append(fix_text)
+            print(f"   📝 Converted {len(state.education_review.direct_edits)} EDITOR edits to WRITER instructions")
 
         # Step 4: REVIEWER reviews
         state = self.alpha_student_review(state)
@@ -2331,6 +2604,50 @@ Be honest about whether this content effectively teaches data science concepts. 
             tracer.trace_node_complete("finalize_complete_week")
         return state
 
+    def _save_draft_to_file(self, week_number: int, section_id: str, revision: int,
+                           content_md: str, draft_record: Dict[str, Any]) -> None:
+        """Save draft with metadata to file for learning from what works"""
+        import os
+        from pathlib import Path
+        import json
+
+        # Create drafts directory: output/drafts/Week{N}/
+        drafts_dir = Path(os.getcwd()) / "output" / "drafts" / f"Week{week_number}"
+        drafts_dir.mkdir(parents=True, exist_ok=True)
+
+        # Save markdown content
+        filename = f"{section_id}_revision_{revision}.md"
+        filepath = drafts_dir / filename
+
+        # Create header with metadata
+        header = f"""---
+section_id: {section_id}
+revision: {revision}
+word_count: {draft_record['word_count']}
+editor_score: {draft_record['editor_score']}/10
+reviewer_score: {draft_record['reviewer_score']}/10
+approved: {draft_record['approved']}
+timestamp: {draft_record['timestamp']}
+editor_breakdown:
+  template_compliance: {draft_record.get('editor_breakdown', {}).get('template_compliance', 'N/A')}
+  building_blocks_compliance: {draft_record.get('editor_breakdown', {}).get('building_blocks_compliance', 'N/A')}
+  sections_compliance: {draft_record.get('editor_breakdown', {}).get('sections_compliance', 'N/A')}
+  narrative_quality: {draft_record.get('editor_breakdown', {}).get('narrative_quality', 'N/A')}
+  educational_quality: {draft_record.get('editor_breakdown', {}).get('educational_quality', 'N/A')}
+  citation_integration: {draft_record.get('editor_breakdown', {}).get('citation_integration', 'N/A')}
+  wlo_alignment: {draft_record.get('editor_breakdown', {}).get('wlo_alignment', 'N/A')}
+---
+
+"""
+
+        try:
+            with open(filepath, 'w', encoding='utf-8') as f:
+                f.write(header)
+                f.write(content_md)
+            print(f"   💾 Saved draft: {filename} (Editor: {draft_record['editor_score']}/10, Reviewer: {draft_record['reviewer_score']}/10)")
+        except Exception as e:
+            print(f"   ⚠️  Could not save draft to file: {e}")
+
     # =============================================================================
     # HELPER METHODS
     # =============================================================================
@@ -2394,8 +2711,8 @@ Be honest about whether this content effectively teaches data science concepts. 
         """Review the complete document for overall coherence and quality"""
 
         # OPTIMIZATION: Use cached guidelines from state (loaded once at initialization)
-        if hasattr(state, 'cached_template_guidelines') and state.cached_template_guidelines:
-            guidelines_content = state.cached_template_guidelines.get('guidelines', '')
+        if hasattr(state, 'cached_guidelines') and state.cached_guidelines:
+            guidelines_content = state.cached_guidelines
         else:
             # Fallback: load guidelines (shouldn't happen after proper initialization)
             print(f"   ⚠️  Guidelines not cached in document review, loading from file...")

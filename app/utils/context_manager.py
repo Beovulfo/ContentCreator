@@ -26,11 +26,13 @@ class ContextManager:
 
     # Model context limits (conservative estimates)
     MODEL_LIMITS = {
-        "gpt-4o": ContextLimits(total_tokens=128000, safety_margin=5000, reserved_for_response=4000),
-        "gpt-4o-mini": ContextLimits(total_tokens=128000, safety_margin=3000, reserved_for_response=2000),
-        "gpt-5-mini": ContextLimits(total_tokens=128000, safety_margin=3000, reserved_for_response=2000),
+        "gpt-4o": ContextLimits(total_tokens=128000, safety_margin=5000, reserved_for_response=32000),
+        "gpt-4o-mini": ContextLimits(total_tokens=128000, safety_margin=3000, reserved_for_response=32000),
+        "gpt-5-mini": ContextLimits(total_tokens=128000, safety_margin=3000, reserved_for_response=32000),
+        "gpt-4.1-mini": ContextLimits(total_tokens=128000, safety_margin=3000, reserved_for_response=32000),
+        "gpt-4.1": ContextLimits(total_tokens=128000, safety_margin=3000, reserved_for_response=32000),
         "gpt-4": ContextLimits(total_tokens=8192, safety_margin=1000, reserved_for_response=1000),
-        "default": ContextLimits(total_tokens=32000, safety_margin=3000, reserved_for_response=2000)
+        "default": ContextLimits(total_tokens=64000, safety_margin=3000, reserved_for_response=32000)
     }
 
     def __init__(self, model_name: str = "gpt-4o-mini"):
@@ -310,10 +312,26 @@ class ContextManager:
 
         return '\n'.join(formatted)
 
-    def _extract_key_guidelines(self, guidelines_content: str, max_tokens: int = 1000) -> str:
-        """Extract most important guidelines for the current context"""
+    def summarize_guidelines(self, guidelines_content: str, max_tokens: int = 16000) -> str:
+        """
+        Intelligently summarize guidelines to fit within token limit.
+        Preserves all critical information while condensing verbose sections.
+        """
+        current_tokens = self.count_tokens(guidelines_content)
 
-        # Key sections to prioritize
+        if current_tokens <= max_tokens:
+            return guidelines_content
+
+        # Extract structured content by priority
+        return self._extract_key_guidelines(guidelines_content, max_tokens=max_tokens)
+
+    def _extract_key_guidelines(self, guidelines_content: str, max_tokens: int = 2000) -> str:
+        """
+        Extract most important guidelines for the current context.
+        Increased max_tokens to 2000 to include more critical information.
+        """
+
+        # Key sections to prioritize (ordered by importance)
         priority_sections = [
             "Template Requirements",
             "Building Blocks",
@@ -321,29 +339,53 @@ class ContextManager:
             "Assessment",
             "Citation",
             "WLO",
-            "Accessibility"
+            "Accessibility",
+            "Narrative",
+            "Word Count",
+            "Structure"
         ]
 
         lines = guidelines_content.split('\n')
         extracted = []
         current_section = ""
+        current_section_content = []
         include_section = False
 
         for line in lines:
             if line.startswith('#'):
+                # Save previous section if it was included
+                if include_section and current_section:
+                    extracted.append(current_section)
+                    # Add summarized content (keep only key points)
+                    for content_line in current_section_content[:10]:  # Max 10 lines per section
+                        if content_line.strip() and not content_line.strip().startswith(('>', '```', '---')):
+                            extracted.append(content_line)
+                    current_section_content = []
+
                 # Check if this is a priority section
                 include_section = any(keyword.lower() in line.lower() for keyword in priority_sections)
                 if include_section:
                     current_section = line
-            elif include_section and line.strip():
-                if current_section:
-                    extracted.append(current_section)
+                else:
                     current_section = ""
-                extracted.append(line)
+            elif include_section and line.strip():
+                current_section_content.append(line)
+
+        # Add last section if included
+        if include_section and current_section:
+            extracted.append(current_section)
+            for content_line in current_section_content[:10]:
+                if content_line.strip() and not content_line.strip().startswith(('>', '```', '---')):
+                    extracted.append(content_line)
 
         # Join and truncate if needed
         guidelines_text = '\n'.join(extracted)
-        return self._truncate_text(guidelines_text, max_tokens)
+
+        # If still too long, apply more aggressive truncation
+        if self.count_tokens(guidelines_text) > max_tokens:
+            guidelines_text = self._truncate_text(guidelines_text, max_tokens)
+
+        return guidelines_text
 
     def _extract_relevant_syllabus(self, syllabus_content: str, max_tokens: int = 600) -> str:
         """Extract relevant WLOs and context from syllabus"""
@@ -362,6 +404,80 @@ class ContextManager:
 
         syllabus_text = '\n'.join(relevant_lines)
         return self._truncate_text(syllabus_text, max_tokens)
+
+    def summarize_template(self, template_content: str, max_tokens: int = 16000) -> str:
+        """
+        Intelligently summarize template to fit within token limit.
+        Preserves all structural requirements and section headers.
+        """
+        current_tokens = self.count_tokens(template_content)
+
+        if current_tokens <= max_tokens:
+            return template_content
+
+        # Extract all headers and key structural elements
+        lines = template_content.split('\n')
+        summarized = []
+        in_code_block = False
+        current_section = None
+        section_content = []
+
+        for line in lines:
+            # Track code blocks
+            if line.strip().startswith('```'):
+                in_code_block = not in_code_block
+                continue
+
+            # Skip code block content
+            if in_code_block:
+                continue
+
+            # Always include headers
+            if line.startswith('#'):
+                # Save previous section summary if exists
+                if current_section and section_content:
+                    summarized.append(current_section)
+                    # Keep first 3 and last 2 lines of content for each section
+                    if len(section_content) > 5:
+                        summarized.extend(section_content[:3])
+                        summarized.append("... [content summarized] ...")
+                        summarized.extend(section_content[-2:])
+                    else:
+                        summarized.extend(section_content)
+                    section_content = []
+
+                current_section = line
+                continue
+
+            # Collect content for current section
+            if line.strip():
+                # Keep bullet points, numbered lists, and key indicators
+                if any(line.strip().startswith(prefix) for prefix in ['- ', '* ', '1.', '2.', '3.', '•', '○']):
+                    section_content.append(line)
+                # Keep lines with time/duration info
+                elif any(keyword in line.lower() for keyword in ['minutes', 'hours', 'time', 'duration', 'wlo', 'required', 'must', 'mandatory']):
+                    section_content.append(line)
+                # Keep short descriptive lines (likely important)
+                elif len(line.strip()) < 100:
+                    section_content.append(line)
+
+        # Add last section
+        if current_section and section_content:
+            summarized.append(current_section)
+            if len(section_content) > 5:
+                summarized.extend(section_content[:3])
+                summarized.append("... [content summarized] ...")
+                summarized.extend(section_content[-2:])
+            else:
+                summarized.extend(section_content)
+
+        result = '\n'.join(summarized)
+
+        # If still too long, use more aggressive truncation
+        if self.count_tokens(result) > max_tokens:
+            result = self._truncate_text(result, max_tokens)
+
+        return result
 
     def _extract_template_essentials(self, template_content: str, max_tokens: int = 400) -> str:
         """Extract essential template structure requirements"""

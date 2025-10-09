@@ -112,14 +112,12 @@ class LinkChecker:
 
     def triple_check(self, urls: List[str]) -> dict:
         """
-        Perform triple verification of all URLs.
-        Returns detailed report with all three verification rounds.
+        Perform single verification of all URLs (renamed from triple_check for backward compatibility).
+        Returns detailed report with verification results.
         All results are serialized to dicts for JSON compatibility.
         """
         results = {
             "round_1": [],
-            "round_2": [],
-            "round_3": [],
             "summary": {
                 "total_urls": len(urls),
                 "passed_all_rounds": 0,
@@ -128,45 +126,25 @@ class LinkChecker:
             }
         }
 
-        # Round 1
-        print(f"🔍 Link Verification Round 1/3...")
-        round_1_results = self.check(urls)
-        results["round_1"] = [self._serialize_result(r) for r in round_1_results]
+        # Single verification round
+        print(f"🔍 Verifying {len(urls)} link(s)...")
+        check_results = self.check(urls)
+        results["round_1"] = [self._serialize_result(r) for r in check_results]
 
-        # Round 2
-        print(f"🔍 Link Verification Round 2/3...")
-        round_2_results = self.check(urls)
-        results["round_2"] = [self._serialize_result(r) for r in round_2_results]
-
-        # Round 3
-        print(f"🔍 Link Verification Round 3/3...")
-        round_3_results = self.check(urls)
-        results["round_3"] = [self._serialize_result(r) for r in round_3_results]
-
-        # Analyze results - URL must pass ALL three rounds
-        url_pass_count = {}
-        for url in urls:
-            url_pass_count[url] = 0
-
-        for round_results in [round_1_results, round_2_results, round_3_results]:
-            for result in round_results:
-                if result.ok:
-                    url_pass_count[result.url] += 1
-
-        # Count URLs that passed all three rounds
-        for url, passes in url_pass_count.items():
-            if passes == 3:
-                results["summary"]["passed_all_rounds"] += 1
+        # Analyze results
+        passed_count = 0
+        for result in check_results:
+            if result.ok:
+                passed_count += 1
             else:
                 results["summary"]["failed_urls"].append({
-                    "url": url,
-                    "passed_rounds": passes,
-                    "failed_rounds": 3 - passes
+                    "url": result.url,
+                    "status": result.status,
+                    "error": result.error
                 })
 
-        results["summary"]["all_passed"] = (
-            results["summary"]["passed_all_rounds"] == results["summary"]["total_urls"]
-        )
+        results["summary"]["passed_all_rounds"] = passed_count
+        results["summary"]["all_passed"] = (passed_count == len(urls))
 
         return results
 

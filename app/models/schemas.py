@@ -78,7 +78,8 @@ class RunState(BaseModel):
     score_history: List[Dict[str, Any]] = Field(default_factory=list, description="History of scores for tracking progression")
     broken_links_details: List[Dict[str, Any]] = Field(default_factory=list, description="Detailed information about broken links for actionable feedback")
     failed_datasets_details: List[Dict[str, Any]] = Field(default_factory=list, description="Detailed information about failed datasets for actionable feedback")
-    cached_template_guidelines: Optional[Dict[str, str]] = Field(default=None, description="Cached template and guidelines to avoid re-loading")
+    cached_guidelines: Optional[str] = Field(default=None, description="Cached guidelines content to avoid re-loading (template.md no longer cached - using template_mapping.yaml instead)")
+    draft_history: List[Dict[str, Any]] = Field(default_factory=list, description="History of all drafts per iteration with scores - learn from what was working")
 
 
 class LinkCheckResult(BaseModel):

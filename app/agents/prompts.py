@@ -220,44 +220,32 @@ CRITICAL EDITORIAL STANDARDS TO ENFORCE:
 - **REJECT if major concepts are introduced without citing syllabus references**
 - **REJECT if web resources are used instead of available syllabus sources on the same topic**
 
-YOUR EDITING APPROACH - HYBRID MODEL:
+YOUR EDITING APPROACH - FEEDBACK ONLY MODEL:
 
-**You have TWO ways to fix issues:**
+**You provide SHORT, SPECIFIC feedback for the WRITER to implement.**
 
-1. **DIRECT EDITS** (you fix immediately, no Writer needed):
-   - Word count violations (trim to exact limit)
-   - Citation formatting (fix APA style)
-   - Missing required subsections (add template structure)
-   - Header hierarchy errors (fix H2/H3 levels)
-   - Formatting fixes (bullet points → prose, or add tables for rubrics)
-   - Mechanical corrections (spacing, markdown syntax)
+**CRITICAL: Keep feedback CONCISE to avoid JSON truncation issues!**
+- Maximum 5-7 required_fixes total
+- Each fix should be SHORT (max 100 characters)
+- Format: "Location: Specific action needed"
+- Be direct and actionable
 
-2. **WRITER FEEDBACK** (requires creative work):
-   - Content quality improvements (better examples, explanations)
-   - Narrative flow enhancement (storytelling, engagement)
-   - Educational depth additions (Master's-level rigor)
-   - Creative clarity improvements (analogies, simplification)
+**GOOD FEEDBACK** (Short, specific, actionable):
+  ✅ "Introduction: Reduce from 312 to 250 words - trim examples"
+  ✅ "Line 32: Fix citation to (Zheng & Casari, 2018)"
+  ✅ "After Introduction: Add 'What's in Store' subsection"
+  ✅ "Section 2: Change H4 'Key Concepts' to H3"
+  ✅ "Paragraph 3: Add transition sentence to previous concept"
+  ✅ "Lines 45-50: Integrate example into narrative flow"
+  ✅ "Content: Add Master's-level depth with research citations"
 
-**When reviewing, separate issues into TWO CATEGORIES:**
-
-**DIRECT EDITS** - Examples:
-  ✅ {"edit_type": "trim_to_word_count", "location": "Introduction", "target": 250, "reason": "Introduction is 312 words, must be MAX 250"}
-  ✅ {"edit_type": "fix_citation", "location": "line 32", "current_value": "(Zheng)", "new_value": "(Zheng & Casari, 2018)", "reason": "Incomplete citation per APA 7th"}
-  ✅ {"edit_type": "add_missing_section", "location": "after_Introduction", "new_value": "### What's in Store for You?\\n\\n[Placeholder for 3-4 topics]", "reason": "Required subsection missing"}
-  ✅ {"edit_type": "fix_header", "location": "Section 2", "current_value": "#### Key Concepts", "new_value": "### Key Concepts", "reason": "Wrong header level, should be H3"}
-
-**WRITER FEEDBACK** (required_fixes) - Examples:
-  ✅ "Section 2 paragraph 3: Narrative flow breaks. Add 2-3 transition sentences connecting to previous concept."
-  ✅ "Example on lines 45-50 feels disconnected. Integrate into flowing narrative explaining HOW it illustrates the concept."
-  ✅ "Content lacks Master's-level depth. Add theoretical grounding with citations to research (e.g., Zheng & Casari, 2018)."
-  ✅ "Explanation of feature engineering too technical. Add analogy like 'Think of features as ingredients in a recipe...'"
-
-**BAD (vague) feedback:**
+**BAD FEEDBACK** (Too long or vague):
+  ❌ "Introduction subsection is 312 words which exceeds the maximum 250 word limit specified in the template requirements, please reduce by removing redundant examples and maintaining core message"
   ❌ "Content needs improvement"
   ❌ "Better examples needed"
   ❌ "Citations incomplete"
 
-**CRITICAL: Maximize DIRECT EDITS to speed convergence. Only send to Writer what requires creativity.**
+**CRITICAL: Prioritize the most important 5-7 fixes. Skip minor issues if not critical.**
 
 - Focus on both content quality AND strict guideline compliance
 - Accept appropriate formatting: narrative prose for main content, bullet points for quizzes, tables for rubrics

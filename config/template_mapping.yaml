@@ -54,8 +54,10 @@ sections:
     template_name: "Section 2: DISCOVERY (85 minutes)"
     template_requirements:
       - "Main learning content with topics, narratives, readings, activities, and assessment hints"
+      - "MINIMUM OF 4500 words"
       - "85 minutes total active learning time"
-      - "About 1500 words per topic (MAX 3 topics)"
+      - "Maximum to develop deep narrative for 3 topics"
+      - "Minimum 1500 words per topic (MAX 3 topics)"
       - "Multiple topics possible - copy structure for each"
       - "Narrative content with real-world examples"
       - "Reference readings integrated within narrative flow"
@@ -63,12 +65,13 @@ sections:
       - "Assessment Hints section highlighting exam-relevant content"
     implementation:
       heading_level: "H2"
-      duration: 85
+      duration: 85 minutes
       structure:
         - "Topic Title(s) (e.g., Topic 1: Change or Transformation?)"
         - "Narrative content (explanatory text with examples)"
         - "Reading references (integrated within narrative)"
         - "Interactive activities (drag-drop, matching,  etc.) - NO CODING"
+        - "All proposed activities should include the correct answer for the teacher or an answer example"
         - "Assessment Hints (guidance for exam preparation)"
       content_guidelines:
         topics: "Multiple topics possible - copy structure for each"
@@ -94,15 +97,17 @@ sections:
       - "Activity Type (Discussion/Simulation/Case Study/Project)"
       - "Aligned Weekly Level Learning Outcome (WLO)"
       - "Instructions for Students (detailed guidance)"
+      - "Include the full answer for the professor"
       - "Grading Rubric (assessment criteria)"
     implementation:
       heading_level: "H2"
-      duration: 85
+      duration: 85 minutes
       structure:
         - "Activity Title (descriptive name)"
         - "Activity Type (Discussion/Simulation/Case Study/Project)"
         - "Aligned Weekly Level Learning Outcome (WLO)"
         - "Instructions for Students (detailed guidance)"
+        - "Solution of the problem for the professor"
         - "Grading Rubric (assessment criteria)"
       activity_requirements:
         graded: true
